@@ -1,0 +1,34 @@
+# Кэш Python и скомпилированные файлы
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Артефакты сборки (папки сборки exe)
+build/
+dist/
+*.spec
+
+# Виртуальные окружения (если есть)
+.venv/
+venv/
+env/
+
+# Настройки редакторов и IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Операционная система
+.DS_Store
+Thumbs.db
+
+# Лог-файлы и временные данные
+*.log
+*.tmp
+*.xlsx
+
+# Файлы, создаваемые для тестирования
+test_save.py
+test_save_result.xlsx
+frequency_test_result.xlsx
