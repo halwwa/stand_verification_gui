@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
+## -*- coding: utf-8 -*-
 """
 Стенд автоматизированной поверки радиоприборов.
-Версия 1.5 — два реальных теста: частота + уровень.
+Версия 2.0 — единый движок MeasurementEngine.
 """
 
 import os
@@ -15,16 +15,29 @@ import serial
 import serial.tools.list_ports
 import pyvisa
 
-from frequency_test import FrequencyTest, TEST_NAME as FREQ_TEST_NAME
-from level_test import LevelTest, TEST_NAME as LEVEL_TEST_NAME
+from measurement_engine import (
+    MeasurementEngine,
+    TEST_FREQ, TEST_LEVEL,
+    TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
+)
 
 
 # ============================================================
-#                    ИМЕНА ТЕСТОВ (из модулей тестов)
+#                    НАЗВАНИЯ ТЕСТОВ (для GUI)
 # ============================================================
 
-FREQUENCY_TEST_NAME = "Тест 1: " + FREQ_TEST_NAME
-LEVEL_TEST_NAME      = "Тест 2: " + LEVEL_TEST_NAME
+# Названия, которые показывает GUI в списке тестов
+TEST_NAMES = [
+    ("Тест 1: Погрешность измерения частоты входного сигнала", TEST_FREQ),
+    ("Тест 2: Погрешность измерения уровня",                    TEST_LEVEL),
+    ("Тест 3: К-гармоник (С6-22)",                              None),   # не реализован
+    ("Тест 4: СВЧ тракт (SMB100A)",                             None),   # не реализован
+    ("Тест 5: Нестабильность частоты",                          TEST_FM_NOISE),  # заглушка
+    ("Тест 6: Паразитная девиация",                             TEST_PM_NOISE),  # заглушка
+]
+
+# Маппинг: имя теста в GUI → идентификатор в движке
+TEST_NAME_TO_ID = {name: tid for name, tid in TEST_NAMES}
 
 
 # ============================================================
@@ -96,10 +109,6 @@ class DeviceCard:
             return [p.device for p in serial.tools.list_ports.comports()]
         except Exception:
             return []
-
-    def refresh_ports(self):
-        if self.kind == "com":
-            self.port_cb["values"] = self._list_ports()
 
     @staticmethod
     def _parse_idn(idn_str):
@@ -219,20 +228,6 @@ class DeviceCard:
 
 
 # ============================================================
-#                    СПИСОК ТЕСТОВ
-# ============================================================
-
-DEFAULT_TESTS = [
-    FREQUENCY_TEST_NAME,                # Тест 1: Погрешность измерения частоты входного сигнала
-    LEVEL_TEST_NAME,                    # Тест 2: Погрешность измерения уровня
-    "Тест 3: К-гармоник (С6-22)",
-    "Тест 4: СВЧ тракт (SMB100A)",
-    "Тест 5: Нестабильность частоты",
-    "Тест 6: Паразитная девиация",
-]
-
-
-# ============================================================
 #                    ГЛАВНОЕ ПРИЛОЖЕНИЕ
 # ============================================================
 
@@ -333,7 +328,7 @@ class StandApp:
 
         columns = ("check", "name", "status")
         self.tests_tree = ttk.Treeview(tests, columns=columns, show="headings",
-                                       height=5, selectmode="none")
+                                       height=6, selectmode="none")
         self.tests_tree.heading("check", text="✓")
         self.tests_tree.heading("name", text="Тест")
         self.tests_tree.heading("status", text="Статус")
@@ -364,12 +359,19 @@ class StandApp:
         ttk.Button(right, text="☐ Снять выделение",
                    command=self.on_deselect_all_tests).pack(fill="x", pady=2)
 
+        # Заполняем список тестов
         self.test_items = []
-        for name in DEFAULT_TESTS:
+        for name, test_id in TEST_NAMES:
             item_id = self.tests_tree.insert("", "end",
                                              values=("☑", name, "—"),
                                              tags=("idle",))
-            self.test_items.append({"id": item_id, "checked": True, "status": "idle"})
+            self.test_items.append({
+                "id": item_id,
+                "name": name,
+                "test_id": test_id,   # идентификатор для движка (или None)
+                "checked": True,
+                "status": "idle",
+            })
 
         self.tests_tree.bind("<Button-1>", self._on_tree_click)
 
@@ -510,43 +512,228 @@ class StandApp:
             values = self.tests_tree.item(t["id"], "values")
             self.tests_tree.item(t["id"], values=("☐", values[1], values[2]))
 
+    # ===================================================
+    #        ЗАПУСК ТЕСТОВ
+    # ===================================================
+
     def on_run_selected(self):
+        """Запуск ТОЛЬКО выделенных тестов."""
         sel = [t for t in self.test_items if t["checked"]]
         if not sel:
             messagebox.showinfo("Нет тестов", "Не выбран ни один тест.")
             return
-
-        if len(sel) == 1:
-            name = self.tests_tree.item(sel[0]["id"], "values")[1]
-            if name == FREQUENCY_TEST_NAME:
-                self._run_frequency_test(sel[0])
-                return
-            if name == LEVEL_TEST_NAME:
-                self._run_level_test(sel[0])
-                return
-
-        self._prepare_and_run(sel)
+        self._start_engine(sel)
 
     def on_start_all(self):
+        """Запуск всех выделенных тестов."""
         sel = [t for t in self.test_items if t["checked"]]
         if not sel:
             messagebox.showinfo("Нет тестов", "Не выбран ни один тест.")
             return
         if not self.report_name_var.get().strip():
             self.update_report_name()
-        self._prepare_and_run(sel)
+        self._start_engine(sel)
 
-    def _prepare_and_run(self, tests):
+    def _start_engine(self, selected_items):
+        """Общая точка запуска движка — и для кнопки «выбранный», и для «всех»."""
         if self.tests_running:
             messagebox.showinfo("Подождите", "Тесты уже выполняются.")
             return
 
-        already_done = all(t["status"] == "done" for t in tests)
-        if already_done:
-            self.log("Автосброс статусов перед новым запуском.")
+        # Собираем список активных тестов из чек-боксов
+        active_ids = []
+        not_impl_names = []
+        for t in selected_items:
+            if t["test_id"] is not None:
+                active_ids.append(t["test_id"])
+            else:
+                not_impl_names.append(t["name"])
+
+        if not active_ids:
+            messagebox.showinfo("Нет реализованных тестов",
+                                "Все выбранные тесты пока в разработке.\n"
+                                "Доступны: «Тест 1: Погрешность измерения частоты входного сигнала»\n"
+                                "и «Тест 2: Погрешность измерения уровня».")
+            return
+
+        # Проверка подключений
+        card_sk3 = self.cards[0]
+        card_gen = self.cards[2]
+        if not card_sk3.is_connected():
+            messagebox.showerror("Не подключён СК3-50",
+                                 "Сначала подключите СК3-50 (первая карточка).")
+            return
+        if not card_gen.is_connected():
+            messagebox.showerror("Не подключён SMB100A",
+                                 "Сначала подключите SMB100A (третья карточка).")
+            return
+
+        # Автосброс статусов, если все уже done
+        if all(t["status"] == "done" for t in selected_items):
             self._reset_statuses_silent()
 
-        self._run_tests(tests)
+        # Блокируем кнопки
+        self.tests_running = True
+        self.stop_flag = False
+        self.start_btn.state(["disabled"])
+        self.reset_btn.state(["disabled"])
+        self.stop_btn.configure(state="normal")
+
+        # Помечаем выбранные тесты «выполняется»
+        for t in selected_items:
+            self._set_test_status(t, "running", "● Ожидание…")
+
+        self.sys_status_var.set("Запуск движка измерений…")
+        self.progress_var.set(0)
+        self.progress_lbl_var.set("0 из ?")
+
+        threading.Thread(
+            target=self._engine_worker,
+            args=(card_sk3.inst, card_gen.inst, active_ids,
+                  selected_items, not_impl_names),
+            daemon=True
+        ).start()
+
+    # ===================================================
+    #        ФОНОВЫЙ ПОТОК ДВИЖКА
+    # ===================================================
+
+    def _engine_worker(self, sk3_inst, gen_inst, active_ids,
+                       selected_items, not_impl_names):
+        try:
+            # Уведомление о нереализованных
+            for nm in not_impl_names:
+                self.root.after(0, lambda nm=nm: self.log(
+                    f"⚠ «{nm}» — в разработке, пропускается."))
+
+            engine = MeasurementEngine(
+                gen=gen_inst, sk3=sk3_inst,
+                active_tests=active_ids,
+                log_callback=lambda msg: self.root.after(0, lambda: self.log(msg)),
+            )
+
+            def progress_cb(idx, total, info_str):
+                pct = idx / total * 100
+                self.root.after(0, lambda: self.progress_var.set(pct))
+                self.root.after(0, lambda: self.progress_lbl_var.set(f"{idx} из {total}"))
+                self.root.after(0, lambda: self.sys_status_var.set(
+                    f"{info_str} ({idx}/{total})"))
+                if self.stop_flag:
+                    raise InterruptedError("Остановлено оператором")
+
+            results, final_status = engine.run(progress_callback=progress_cb)
+
+            # Сохраняем Excel
+            saved_path = self._save_report_to_excel(engine)
+
+                      # Точная покраска КАЖДОГО теста — по его собственным результатам
+            self._paint_tests_by_results(engine, selected_items)
+
+            # Сводка
+            s = engine.summary()
+            self.root.after(0, lambda: self.log(
+                f"Движок завершён. Итог: {final_status}."))
+            self.root.after(0, lambda: self.log(f"Сводка: {s}"))
+            if saved_path:
+                self.root.after(0, lambda: self.log(f"Отчёт сохранён: {saved_path}"))
+            self.root.after(0, lambda: self.sys_status_var.set(f"Готово. Статус: {final_status}"))
+
+        except InterruptedError:
+            for t in selected_items:
+                if t["test_id"] is not None:
+                    self.root.after(0, lambda t=t: self._set_test_status(
+                        t, "warn", "⚠ Остановлен"))
+            self.root.after(0, lambda: self.log("⚠ Выполнение прервано оператором."))
+            self.root.after(0, lambda: self.sys_status_var.set("Остановлено оператором."))
+
+        except Exception as e:
+            err_text = str(e)
+            for t in selected_items:
+                if t["test_id"] is not None:
+                    self.root.after(0, lambda t=t, err=err_text: self._set_test_status(
+                        t, "error", f"✖ {err[:30]}"))
+            self.root.after(0, lambda err=err_text: self.log(f"❌ Ошибка движка: {err}"))
+            self.root.after(0, lambda: self.sys_status_var.set("Ошибка выполнения."))
+
+        finally:
+            self.root.after(0, self._finish_run)
+            
+    def _paint_tests_by_results(self, engine, selected_items):
+        """
+        Красит статус каждого теста ПО ЕГО РЕЗУЛЬТАТАМ.
+        Для каждого активного теста смотрим его строки в engine.results,
+        определяем итоговый статус (ok/warn/fail) и применяем цвет.
+        """
+        from measurement_engine import TEST_FREQ, TEST_LEVEL
+
+        def evaluate_test(rows):
+            """
+            rows — список строк результатов теста.
+            Возвращает (tag, label) — статус для GUI.
+            """
+            if not rows:
+                return "idle", "—"
+            codes = [r[5] for r in rows]   # 6-й элемент — status_code
+            if 'fail' in codes:
+                return "error", "✖ Провален"
+            if 'warn' in codes:
+                return "warn", "⚠ Внимание"
+            return "done", "✔ Пройден"
+
+        for t in selected_items:
+            tid = t["test_id"]
+            if tid is None:
+                continue   # нереализованный тест — не трогаем
+
+            rows = engine.results.get(tid, [])
+            tag, label = evaluate_test(rows)
+            self.root.after(0, lambda t=t, tag=tag, label=label:
+                            self._set_test_status(t, tag, label))
+
+    # ===================================================
+    #        СОХРАНЕНИЕ В EXCEL
+    # ===================================================
+
+    def _save_report_to_excel(self, engine):
+        fname = self.report_name_var.get().strip()
+        if not fname:
+            self.update_report_name()
+            fname = self.report_name_var.get().strip()
+        if not fname:
+            fname = "report.xlsx"
+
+        folder = self.report_path_var.get().strip() or "./"
+        folder = folder.replace("\\", "/")
+
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except Exception as e:
+            err_text = str(e)
+            self.root.after(0, lambda err=err_text: self.log(
+                f"⚠ Не удалось создать папку {folder}: {err}. Сохраняю рядом со скриптом."))
+            folder = "."
+
+        full_path = os.path.join(folder, fname)
+
+        try:
+            engine.save_to_excel(full_path)
+            return full_path
+        except Exception as e:
+            fallback = os.path.join(".", fname)
+            try:
+                engine.save_to_excel(fallback)
+                self.root.after(0, lambda: self.log(
+                    f"⚠ Сохранено по резервному пути: {fallback}"))
+                return fallback
+            except Exception as e2:
+                err_text = str(e2)
+                self.root.after(0, lambda err=err_text: self.log(
+                    f"❌ Не удалось сохранить отчёт: {err}"))
+                return None
+
+    # ===================================================
+    #        ВСПОМОГАТЕЛЬНЫЕ
+    # ===================================================
 
     def on_emergency_stop(self):
         if not self.tests_running:
@@ -569,296 +756,6 @@ class StandApp:
         self.progress_lbl_var.set(f"0 из {len(self.test_items)}")
         self.sys_status_var.set("Система готова к работе.")
 
-    # ===================================================
-    #        ТЕСТ ЧАСТОТЫ
-    # ===================================================
-
-    def _run_frequency_test(self, test):
-        if self.tests_running:
-            messagebox.showinfo("Подождите", "Тесты уже выполняются.")
-            return
-
-        card_sk3 = self.cards[0]
-        card_gen = self.cards[2]
-
-        if not card_sk3.is_connected():
-            messagebox.showerror("Не подключён СК3-50",
-                                 "Сначала подключите СК3-50 (первая карточка).")
-            return
-        if not card_gen.is_connected():
-            messagebox.showerror("Не подключён SMB100A",
-                                 "Сначала подключите SMB100A (третья карточка).")
-            return
-
-        if test["status"] == "done":
-            self._set_test_status(test, "idle", "—")
-
-        self.tests_running = True
-        self.stop_flag = False
-        self.start_btn.state(["disabled"])
-        self.reset_btn.state(["disabled"])
-        self.stop_btn.configure(state="normal")
-
-        self._set_test_status(test, "running", "● Выполняется…")
-        self.sys_status_var.set(f"Выполняется: {FREQ_TEST_NAME}")
-        self.progress_var.set(0)
-        self.progress_lbl_var.set("0 из 13")
-
-        threading.Thread(
-            target=self._frequency_worker,
-            args=(card_sk3.inst, card_gen.inst, test),
-            daemon=True
-        ).start()
-
-    def _frequency_worker(self, sk3_inst, gen_inst, test):
-        try:
-            tester = FrequencyTest(gen=gen_inst, sk3=sk3_inst,
-                                   log_callback=lambda msg: self.root.after(0, lambda: self.log(msg)))
-
-            def progress_cb(idx, total, freq_mhz):
-                pct = idx / total * 100
-                self.root.after(0, lambda: self.progress_var.set(pct))
-                self.root.after(0, lambda: self.progress_lbl_var.set(f"{idx} из {total}"))
-                self.root.after(0, lambda: self.sys_status_var.set(
-                    f"Тест частоты: {freq_mhz} МГц ({idx}/{total})"))
-                if self.stop_flag:
-                    raise InterruptedError("Остановлено оператором")
-
-            results, final_status = tester.run(progress_callback=progress_cb)
-
-            saved_path = self._save_report_to_excel(tester, sheet_name="Частота")
-
-            if final_status == 'done':
-                self.root.after(0, lambda: self._set_test_status(test, "done", "✔ Выполнен"))
-            elif final_status == 'warn':
-                self.root.after(0, lambda: self._set_test_status(test, "warn", "⚠ Внимание"))
-            elif final_status == 'error':
-                self.root.after(0, lambda: self._set_test_status(test, "error", "✖ Провал"))
-            else:
-                self.root.after(0, lambda: self._set_test_status(test, "idle", "—"))
-
-            s = tester.summary()
-            self.root.after(0, lambda: self.log(
-                f"Тест частоты завершён. Всего: {s['total']}, ОК: {s['ok']}, "
-                f"внимание: {s['warn']}, провал: {s['fail']}."))
-            if saved_path:
-                self.root.after(0, lambda: self.log(f"Отчёт сохранён: {saved_path}"))
-            self.root.after(0, lambda: self.sys_status_var.set(f"Готово. Статус: {final_status}"))
-
-        except InterruptedError:
-            self.root.after(0, lambda: self._set_test_status(test, "warn", "⚠ Остановлен"))
-            self.root.after(0, lambda: self.log("⚠ Тест частоты прерван оператором."))
-            self.root.after(0, lambda: self.sys_status_var.set("Остановлено оператором."))
-
-        except Exception as e:
-            err_text = str(e)
-            self.root.after(0, lambda err=err_text: self._set_test_status(test, "error", f"✖ {err[:40]}"))
-            self.root.after(0, lambda err=err_text: self.log(f"❌ Ошибка теста частоты: {err}"))
-            self.root.after(0, lambda: self.sys_status_var.set("Ошибка выполнения теста."))
-
-        finally:
-            self.root.after(0, self._finish_run)
-
-    # ===================================================
-    #        ТЕСТ УРОВНЯ
-    # ===================================================
-
-    def _run_level_test(self, test):
-        if self.tests_running:
-            messagebox.showinfo("Подождите", "Тесты уже выполняются.")
-            return
-
-        card_sk3 = self.cards[0]
-        card_gen = self.cards[2]
-
-        if not card_sk3.is_connected():
-            messagebox.showerror("Не подключён СК3-50",
-                                 "Сначала подключите СК3-50 (первая карточка).")
-            return
-        if not card_gen.is_connected():
-            messagebox.showerror("Не подключён SMB100A",
-                                 "Сначала подключите SMB100A (третья карточка).")
-            return
-
-        if test["status"] == "done":
-            self._set_test_status(test, "idle", "—")
-
-        self.tests_running = True
-        self.stop_flag = False
-        self.start_btn.state(["disabled"])
-        self.reset_btn.state(["disabled"])
-        self.stop_btn.configure(state="normal")
-
-        self._set_test_status(test, "running", "● Выполняется…")
-        self.sys_status_var.set(f"Выполняется: {LEVEL_TEST_NAME}")
-        self.progress_var.set(0)
-        self.progress_lbl_var.set("0 из ~37")
-
-        threading.Thread(
-            target=self._level_worker,
-            args=(card_sk3.inst, card_gen.inst, test),
-            daemon=True
-        ).start()
-
-    def _level_worker(self, sk3_inst, gen_inst, test):
-        try:
-            tester = LevelTest(gen=gen_inst, sk3=sk3_inst,
-                               log_callback=lambda msg: self.root.after(0, lambda: self.log(msg)))
-
-            def progress_cb(idx, total, info_str):
-                pct = idx / total * 100
-                self.root.after(0, lambda: self.progress_var.set(pct))
-                self.root.after(0, lambda: self.progress_lbl_var.set(f"{idx} из {total}"))
-                self.root.after(0, lambda: self.sys_status_var.set(
-                    f"Тест уровня: {info_str} ({idx}/{total})"))
-                if self.stop_flag:
-                    raise InterruptedError("Остановлено оператором")
-
-            results, final_status = tester.run(progress_callback=progress_cb)
-
-            saved_path = self._save_report_to_excel(tester, sheet_name="Уровень")
-
-            if final_status == 'done':
-                self.root.after(0, lambda: self._set_test_status(test, "done", "✔ Выполнен"))
-            elif final_status == 'warn':
-                self.root.after(0, lambda: self._set_test_status(test, "warn", "⚠ Внимание"))
-            elif final_status == 'error':
-                self.root.after(0, lambda: self._set_test_status(test, "error", "✖ Провал"))
-            else:
-                self.root.after(0, lambda: self._set_test_status(test, "idle", "—"))
-
-            s = tester.summary()
-            self.root.after(0, lambda: self.log(
-                f"Тест уровня завершён. Всего: {s['total']}, ОК: {s['ok']}, "
-                f"внимание: {s['warn']}, провал: {s['fail']}."))
-            if saved_path:
-                self.root.after(0, lambda: self.log(f"Отчёт сохранён: {saved_path}"))
-            self.root.after(0, lambda: self.sys_status_var.set(f"Готово. Статус: {final_status}"))
-
-        except InterruptedError:
-            self.root.after(0, lambda: self._set_test_status(test, "warn", "⚠ Остановлен"))
-            self.root.after(0, lambda: self.log("⚠ Тест уровня прерван оператором."))
-            self.root.after(0, lambda: self.sys_status_var.set("Остановлено оператором."))
-
-        except Exception as e:
-            err_text = str(e)
-            self.root.after(0, lambda err=err_text: self._set_test_status(test, "error", f"✖ {err[:40]}"))
-            self.root.after(0, lambda err=err_text: self.log(f"❌ Ошибка теста уровня: {err}"))
-            self.root.after(0, lambda: self.sys_status_var.set("Ошибка выполнения теста."))
-
-        finally:
-            self.root.after(0, self._finish_run)
-
-    # ===================================================
-    #        СОХРАНЕНИЕ В EXCEL (ОБЩЕЕ)
-    # ===================================================
-
-    def _save_report_to_excel(self, tester, sheet_name):
-        """Сохраняет отчёт любого теста (у которого есть save_to_excel)
-        в файл по пути из GUI. При неудаче — рядом со скриптом."""
-        fname = self.report_name_var.get().strip()
-        if not fname:
-            self.update_report_name()
-            fname = self.report_name_var.get().strip()
-        if not fname:
-            fname = "report.xlsx"
-
-        folder = self.report_path_var.get().strip() or "./"
-        folder = folder.replace("\\", "/")
-
-        try:
-            os.makedirs(folder, exist_ok=True)
-        except Exception as e:
-            err_text = str(e)
-            self.root.after(0, lambda err=err_text: self.log(
-                f"⚠ Не удалось создать папку {folder}: {err}. Сохраняю рядом со скриптом."))
-            folder = "."
-
-        full_path = os.path.join(folder, fname)
-
-        try:
-            tester.save_to_excel(full_path, sheet_name=sheet_name)
-            return full_path
-        except Exception as e:
-            fallback = os.path.join(".", fname)
-            try:
-                tester.save_to_excel(fallback, sheet_name=sheet_name)
-                self.root.after(0, lambda: self.log(
-                    f"⚠ Сохранено по резервному пути: {fallback}"))
-                return fallback
-            except Exception as e2:
-                err_text = str(e2)
-                self.root.after(0, lambda err=err_text: self.log(
-                    f"❌ Не удалось сохранить отчёт: {err}"))
-                return None
-
-    # ===================================================
-    #        ЗАГЛУШКИ ДЛЯ ОСТАЛЬНЫХ ТЕСТОВ
-    # ===================================================
-
-    def _run_tests(self, tests):
-        self.stop_flag = False
-        self.tests_running = True
-
-        self.start_btn.state(["disabled"])
-        self.reset_btn.state(["disabled"])
-        self.stop_btn.configure(state="normal")
-
-        total = len(tests)
-        self.progress_var.set(0)
-        self.progress_lbl_var.set(f"0 из {total}")
-
-        def worker():
-            completed = 0
-            interrupted = False
-
-            for idx, t in enumerate(tests, start=1):
-                if self.stop_flag:
-                    interrupted = True
-                    break
-
-                name = self.tests_tree.item(t["id"], "values")[1]
-
-                self.root.after(0, lambda t=t: self._set_test_status(
-                    t, "running", "● Выполняется"))
-                self.root.after(0, lambda i=idx, n=total, nm=name: self.sys_status_var.set(
-                    f"Выполняется тест {i} из {n}: {nm}"))
-                self.root.after(0, lambda nm=name: self.log(f"Запуск: {nm}"))
-
-                was_interrupted = False
-                for _ in range(20):
-                    if self.stop_flag:
-                        was_interrupted = True
-                        break
-                    time.sleep(0.1)
-
-                if was_interrupted:
-                    self.root.after(0, lambda t=t: self._set_test_status(
-                        t, "warn", "⚠ Остановлен"))
-                    self.root.after(0, lambda nm=name: self.log(
-                        f"Прерван: {nm} (аварийный стоп)"))
-                    interrupted = True
-                    break
-
-                self.root.after(0, lambda t=t: self._set_test_status(
-                    t, "done", "✔ Выполнен"))
-                self.root.after(0, lambda nm=name: self.log(f"Завершён: {nm}"))
-
-                completed += 1
-                pct = completed / total * 100
-                self.root.after(0, lambda p=pct, c=completed, n=total:
-                                self._update_progress(p, c, n))
-
-            if interrupted:
-                self.root.after(0, lambda: self.sys_status_var.set(
-                    f"Остановлено оператором. Успешно завершено: {completed} из {total}."))
-            else:
-                self.root.after(0, lambda: self.sys_status_var.set("Готово."))
-
-            self.root.after(0, self._finish_run)
-
-        threading.Thread(target=worker, daemon=True).start()
-
     def _finish_run(self):
         self.tests_running = False
         self.start_btn.state(["!disabled"])
@@ -870,10 +767,6 @@ class StandApp:
         values = self.tests_tree.item(test["id"], "values")
         self.tests_tree.item(test["id"], values=(values[0], values[1], label))
         test["status"] = tag
-
-    def _update_progress(self, pct, completed, total):
-        self.progress_var.set(pct)
-        self.progress_lbl_var.set(f"{completed} из {total}")
 
 
 # ============================================================
