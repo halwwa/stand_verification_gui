@@ -1,10 +1,20 @@
+from math import isfinite
+
+
 FREQ_TOLERANCE_FORMULA = lambda f_hz: 5e-6 * abs(f_hz) + 1.0
 LEVEL_TOLERANCE_DB = 1.0
 LEVEL_TOLERANCE_HIGH_DB = 2.0
 TOLERANCE_RATIO_WARN = 0.7
 
 
+def require_finite(value, label):
+    if not isfinite(value):
+        raise ValueError(f'{label}: недопустимое числовое значение {value}')
+
+
 def evaluate(value, tolerance):
+    require_finite(value, 'Погрешность')
+    require_finite(tolerance, 'Допуск')
     abs_v = abs(value)
     if abs_v > tolerance:
         return 'fail', '🔴'

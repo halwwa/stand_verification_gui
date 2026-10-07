@@ -1,7 +1,7 @@
 from stand_verification.config import SETTLE_DELAY
 from stand_verification.models import LevelResult
 from stand_verification.measurement.tolerances import (
-    LEVEL_TOLERANCE_DB, LEVEL_TOLERANCE_HIGH_DB, evaluate,
+    LEVEL_TOLERANCE_DB, LEVEL_TOLERANCE_HIGH_DB, evaluate, require_finite,
 )
 
 
@@ -29,6 +29,7 @@ def measure_level(gen, sk3, stop_event, log, freq_mhz, level_dbm) -> LevelResult
         )
     try:
         oup = sk3.read_power_dbm()
+        require_finite(oup, 'Измеренный уровень')
         ku = oup - level_dbm
         status, emoji = evaluate(ku, tolerance)
         log(f"   level: {ku:+.2f} дБ, допуск ±{tolerance:.2f} дБ → {emoji}")

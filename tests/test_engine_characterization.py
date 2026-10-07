@@ -154,6 +154,62 @@ class EngineCharacterizationTests(unittest.TestCase):
         self.assertEqual(engine.sk3.session.commands, [])
         self.assertIn('реализованного теста', engine.diagnostics[0])
 
+    def test_evaluation_rejects_non_finite_error_and_tolerance(self):
+        for invalid in (float('nan'), float('inf'), float('-inf')):
+            for value, tolerance in ((invalid, 1.0), (0.0, invalid)):
+                with self.subTest(value=value, tolerance=tolerance):
+                    with self.assertRaises(ValueError):
+                        evaluate(value, tolerance)
+
+    def test_non_finite_level_readings_record_error_and_stop(self):
+        for response in (b'nan', b'inf', b'-inf'):
+            with self.subTest(response=response):
+                engine = self.engine([TEST_LEVEL], [response, b'0', b'13'])
+                results, status = engine.run(['2000', '3000'])
+                self.assertEqual(status, 'error')
+                self.assertEqual(len(results[TEST_LEVEL]), 1)
+                row = results[TEST_LEVEL][0]
+                self.assertEqual(row.status, 'error')
+                self.assertEqual(row.frequency_mhz, 2000.0)
+                self.assertEqual(row.set_level_dbm, -13.0)
+                self.assertEqual(row.tolerance_db, 2.0)
+                self.assertIsNone(row.measured_level_dbm)
+                self.assertIsNone(row.error_db)
+                self.assertIn('Измеренный уровень', row.comment)
+                self.assertIn(response.decode(), row.comment)
+                self.assertEqual(engine.diagnostics, [row.comment])
+                self.assertEqual(engine.summary()[TEST_LEVEL]['error'], 1)
+                self.assertEqual(engine.sk3.session.commands, [b'POW?\n'])
+                self.assertEqual(engine.gen.session.commands[-1], 'OUTP OFF')
+
+    def test_non_finite_frequency_readings_record_error_and_stop(self):
+        for response in ('nan', 'inf', '-inf'):
+            for source, label in (
+                ('generator', 'Частота генератора'),
+                ('meter', 'Измеренная частота'),
+                ('if', 'Частота ПЧ'),
+            ):
+                with self.subTest(response=response, source=source):
+                    gen = FakeGenerator([response, response] if source == 'generator'
+                                        else ['10000', '10000'])
+                    readings = [response.encode() if source == 'meter' else b'10000',
+                                response.encode() if source == 'if' else b'2000']
+                    engine = self.engine([TEST_FREQ], readings, gen=gen)
+                    results, status = engine.run(['0.01', '1'])
+                    self.assertEqual(status, 'error')
+                    self.assertEqual(len(results[TEST_FREQ]), 1)
+                    row = results[TEST_FREQ][0]
+                    self.assertEqual(row.status, 'error')
+                    self.assertEqual(row.reference_frequency_hz, 10000.0)
+                    for field in ('measured_frequency_hz', 'error_hz',
+                                  'tolerance_hz', 'if_frequency_khz'):
+                        self.assertIsNone(getattr(row, field))
+                    self.assertIn(label, row.comment)
+                    self.assertIn(response, row.comment)
+                    self.assertEqual(engine.diagnostics, [row.comment])
+                    self.assertEqual(engine.summary()[TEST_FREQ]['error'], 1)
+                    self.assertEqual(gen.commands[-1], 'OUTP OFF')
+
     def test_stop_during_wait_and_progress_interrupted_error(self):
         event = FakeEvent(wait_results=[False, True])
         engine = self.engine([TEST_FREQ], [b'10000\n', b'0\n'], event=event)

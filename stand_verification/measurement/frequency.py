@@ -1,5 +1,5 @@
 from stand_verification.config import SETTLE_DELAY
-from stand_verification.measurement.tolerances import FREQ_TOLERANCE_FORMULA, evaluate
+from stand_verification.measurement.tolerances import FREQ_TOLERANCE_FORMULA, evaluate, require_finite
 from stand_verification.models import FrequencyResult
 
 
@@ -13,10 +13,13 @@ def measure_frequency(gen, sk3, stop_event, log, freq_mhz) -> FrequencyResult:
         )
     try:
         inpf1 = gen.read_frequency_hz()
+        require_finite(inpf1, 'Частота генератора')
         fiz = sk3.read_frequency_hz()
+        require_finite(fiz, 'Измеренная частота')
         kf = fiz - inpf1
         tolerance = FREQ_TOLERANCE_FORMULA(inpf1)
         fph = sk3.read_if_khz()
+        require_finite(fph, 'Частота ПЧ')
         status, emoji = evaluate(kf, tolerance)
         log(f"   freq : {kf:+.2f} Гц, допуск ±{tolerance:.2f} Гц → {emoji}")
         return FrequencyResult(
