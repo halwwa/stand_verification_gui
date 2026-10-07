@@ -28,11 +28,21 @@ def export_excel(snapshot, filepath, log_callback=None):
         ws = wb.create_sheet(name)
         ws.append(headers)
         for row in snapshot.results.get(key, []):
-            ws.append(row)
-            if row[5] in fills:
-                ws.cell(ws.max_row, 6).fill = fills[row[5]]
-            if row[5] == 'error' and row[6]:
-                ws.cell(ws.max_row, 7).comment = Comment(str(row[6]), 'MeasurementEngine')
+            if key == 'freq':
+                ws.append([
+                    row.reference_frequency_hz, row.measured_frequency_hz,
+                    row.error_hz, row.tolerance_hz, row.if_frequency_khz,
+                    row.status, row.comment,
+                ])
+            else:
+                ws.append([
+                    row.frequency_mhz, row.set_level_dbm, row.measured_level_dbm,
+                    row.error_db, row.tolerance_db, row.status, row.comment,
+                ])
+            if row.status in fills:
+                ws.cell(ws.max_row, 6).fill = fills[row.status]
+            if row.status == 'error' and row.comment:
+                ws.cell(ws.max_row, 7).comment = Comment(str(row.comment), 'MeasurementEngine')
     for name in ('Сводка', 'Тесты', 'Диагностика'):
         if name in wb.sheetnames:
             del wb[name]

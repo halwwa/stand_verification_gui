@@ -19,6 +19,7 @@ from stand_verification.config import (
 )
 from stand_verification.measurement.frequency import measure_frequency
 from stand_verification.measurement.level import measure_level
+from stand_verification.models import FrequencyResult, LevelResult
 from stand_verification.devices.smb100a import SMB100A
 from stand_verification.devices.sk3_50 import SK350
 
@@ -136,7 +137,7 @@ class MeasurementEngine:
         :param freqs: список частот (МГц). По умолчанию F_LIST.
         :param progress_callback: f(idx, total, info_str) — перед каждой точкой.
                                   Может возбудить InterruptedError для остановки.
-        :return: (results_dict, final_status)
+        :return: (results_dict, final_status), results contain FrequencyResult/LevelResult.
         """
         if freqs is None:
             freqs = F_LIST
@@ -210,19 +211,19 @@ class MeasurementEngine:
                             self.termination_reason = 'Остановка запрошена'
                             self.final_status = 'stopped'
                             break
-                    row, status = self._measure_freq(freq_mhz)
+                    row = self._measure_freq(freq_mhz)
                     self.results[TEST_FREQ].append(row)
-                    if status == 'error':
+                    if row.status == 'error':
                         if self._stopped():
-                            self.termination_reason = row[-1]
+                            self.termination_reason = row.comment
                             self.final_status = 'stopped'
                             break
                         failed = True
                         self.final_status = 'error'
-                        self.termination_reason = row[-1]
-                        self._diagnose(row[-1])
+                        self.termination_reason = row.comment
+                        self._diagnose(row.comment)
                         break
-                    self._any_warn |= status in ('warn', 'fail')
+                    self._any_warn |= row.status in ('warn', 'fail')
                 if failed or self.final_status == 'stopped':
                     break
                 if TEST_LEVEL in self.active_tests:
@@ -241,19 +242,19 @@ class MeasurementEngine:
                                 self.termination_reason = 'Остановка запрошена'
                                 self.final_status = 'stopped'
                                 break
-                        row, status = self._measure_level(freq_mhz, lv)
+                        row = self._measure_level(freq_mhz, lv)
                         self.results[TEST_LEVEL].append(row)
-                        if status == 'error':
+                        if row.status == 'error':
                             if self._stopped():
-                                self.termination_reason = row[-1]
+                                self.termination_reason = row.comment
                                 self.final_status = 'stopped'
                                 break
                             failed = True
                             self.final_status = 'error'
-                            self.termination_reason = row[-1]
-                            self._diagnose(row[-1])
+                            self.termination_reason = row.comment
+                            self._diagnose(row.comment)
                             break
-                        self._any_warn |= status in ('warn', 'fail')
+                        self._any_warn |= row.status in ('warn', 'fail')
                     if failed or self.final_status == 'stopped':
                         break
                 for t in self.active_tests:
@@ -284,14 +285,14 @@ class MeasurementEngine:
     #                    ИЗМЕРЕНИЕ ЧАСТОТЫ
     # --------------------------------------------------------
 
-    def _measure_freq(self, freq_mhz):
+    def _measure_freq(self, freq_mhz) -> FrequencyResult:
         return measure_frequency(self.gen, self.sk3, self.stop_event, self._log, freq_mhz)
 
     # --------------------------------------------------------
     #                    ИЗМЕРЕНИЕ УРОВНЯ
     # --------------------------------------------------------
 
-    def _measure_level(self, freq_mhz, level_dbm):
+    def _measure_level(self, freq_mhz, level_dbm) -> LevelResult:
         return measure_level(self.gen, self.sk3, self.stop_event, self._log,
                              freq_mhz, level_dbm)
 
@@ -320,10 +321,10 @@ class MeasurementEngine:
                 continue
             planned = getattr(self, '_planned', {}).get(key, 0)
             total = len(rows)
-            ok = sum(1 for r in rows if r[5] == 'ok')
-            warn = sum(1 for r in rows if r[5] == 'warn')
-            fail = sum(1 for r in rows if r[5] == 'fail')
-            error = sum(1 for r in rows if r[5] == 'error')
+            ok = sum(1 for r in rows if r.status == 'ok')
+            warn = sum(1 for r in rows if r.status == 'warn')
+            fail = sum(1 for r in rows if r.status == 'fail')
+            error = sum(1 for r in rows if r.status == 'error')
             complete = total == planned and error == 0 and fail == 0
             status = ('error' if error else 'not_started' if total == 0 else
                       'incomplete' if not complete else 'warn' if warn or fail else 'done')

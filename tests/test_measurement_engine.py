@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from stand_verification.measurement.engine import MeasurementEngine, TEST_FREQ, TEST_LEVEL
+from stand_verification.models import FrequencyResult, LevelResult
 from stand_verification.reports.excel import export_excel
 
 
@@ -53,13 +54,33 @@ class MeasurementEngineTests(unittest.TestCase):
         self.assertEqual(engine.summary()[TEST_FREQ]['status'], 'done')
         self.assertIn('OUTP OFF', engine.gen.session.commands)
 
+    def test_rerun_does_not_mutate_prior_snapshot(self):
+        engine = self.engine(sk3=FakeMeter([
+            b'10000\n', b'2000\n', b'10001\n', b'2000\n',
+        ]))
+        with patch('stand_verification.measurement.frequency.SETTLE_DELAY', 0):
+            engine.run(['0.01'])
+            snapshot = engine.snapshot()
+            engine.run(['0.01'])
+        self.assertEqual(snapshot.results[TEST_FREQ], [FrequencyResult(
+            reference_frequency_hz=10000.0, measured_frequency_hz=10000.0,
+            error_hz=0.0, tolerance_hz=1.05, if_frequency_khz=2.0,
+            status='ok', comment='\U0001f7e2',
+        )])
+        self.assertEqual(len(snapshot.results[TEST_FREQ]), 1)
+        self.assertEqual(snapshot.summary[TEST_FREQ]['total'], 1)
+        self.assertEqual(engine.results[TEST_FREQ][0].measured_frequency_hz, 10001.0)
+
     def test_invalid_if_records_error_and_stops(self):
         engine = self.engine(sk3=FakeMeter([b'10000\n', b'invalid\n']))
         with patch('stand_verification.measurement.frequency.SETTLE_DELAY', 0):
             results, status = engine.run(['0.01', '0.1'])
         self.assertEqual(status, 'error')
         self.assertEqual(len(results[TEST_FREQ]), 1)
-        self.assertEqual(results[TEST_FREQ][0][5], 'error')
+        self.assertEqual(results[TEST_FREQ][0].status, 'error')
+        self.assertEqual(results[TEST_FREQ][0].reference_frequency_hz, 10000.0)
+        self.assertEqual(results[TEST_FREQ][0].comment,
+                         "Некорректный разбор частоты ПЧ: could not convert string to float: 'invalid'")
         self.assertIn('OUTP OFF', engine.gen.session.commands)
         self.assertTrue(engine.diagnostics)
 
@@ -95,7 +116,11 @@ class MeasurementEngineTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec('openpyxl'), 'openpyxl is not installed')
     def test_export_has_summary_and_error_status(self):
         engine = self.engine()
-        engine.results[TEST_FREQ] = [[10000, None, None, None, None, 'error', 'meter failure']]
+        engine.results[TEST_FREQ] = [FrequencyResult(
+            reference_frequency_hz=10000, measured_frequency_hz=None,
+            error_hz=None, tolerance_hz=None, if_frequency_khz=None,
+            status='error', comment='meter failure',
+        )]
         engine.final_status = 'error'
         engine._planned = {TEST_FREQ: 1}
         engine.diagnostics = ['meter failure']
@@ -124,15 +149,18 @@ class MeasurementEngineTests(unittest.TestCase):
             with self.subTest(frequency=frequency, measured=measured):
                 engine = self.engine(sk3=FakeMeter([str(measured).encode()]))
                 with patch('stand_verification.measurement.level.SETTLE_DELAY', 0):
-                    row, status = engine._measure_level(str(frequency), 0)
-                self.assertEqual(row[4], tolerance)
-                self.assertEqual(status, expected)
+                    row = engine._measure_level(str(frequency), 0)
+                self.assertEqual(row.tolerance_db, tolerance)
+                self.assertEqual(row.status, expected)
 
     def test_level_error_keeps_frequency_dependent_tolerance(self):
         engine = self.engine(gen=FakeGenerator(fail_write='POW 0'))
-        row, status = engine._measure_level('2000', 0)
-        self.assertEqual(status, 'error')
-        self.assertEqual(row[4], 2.0)
+        row = engine._measure_level('2000', 0)
+        self.assertEqual(row, LevelResult(
+            frequency_mhz=2000.0, set_level_dbm=0,
+            measured_level_dbm=None, error_db=None, tolerance_db=2.0,
+            status='error', comment='Ошибка установки уровня 0 dBm: write failed: POW 0',
+        ))
 
 
 if __name__ == '__main__':

@@ -1,6 +1,8 @@
 import unittest
+from dataclasses import FrozenInstanceError
 
 from stand_verification.measurement.engine import MeasurementEngine, TEST_FREQ, TEST_LEVEL
+from stand_verification.models import FrequencyResult, LevelResult
 from stand_verification.measurement.tolerances import evaluate
 
 
@@ -88,7 +90,7 @@ class EngineCharacterizationTests(unittest.TestCase):
         ])
         self.assertEqual(gen.queries, ['FREQ?', 'FREQ?'])
         self.assertEqual(meter.commands, [b'FREQ?\n', b'FREQ:INT?\n', b'POW?\n', b'POW?\n'])
-        self.assertEqual([row[1] for row in result[TEST_LEVEL]], [-13.0, 0.0])
+        self.assertEqual([row.set_level_dbm for row in result[TEST_LEVEL]], [-13.0, 0.0])
 
     def test_frequency_only_and_level_only_cycles(self):
         freq_engine = self.engine([TEST_FREQ], [b'10000\n', b'2000\n'])
@@ -106,14 +108,14 @@ class EngineCharacterizationTests(unittest.TestCase):
     def test_low_frequency_uses_two_levels_and_high_frequency_uses_three(self):
         engine = self.engine([TEST_LEVEL], [b'-13\n', b'0\n', b'-13\n', b'0\n', b'13\n'])
         result, _ = engine.run(['0.1', '0.2'])
-        self.assertEqual([row[1] for row in result[TEST_LEVEL]], [-13.0, 0.0, -13.0, 0.0, 13.0])
+        self.assertEqual([row.set_level_dbm for row in result[TEST_LEVEL]], [-13.0, 0.0, -13.0, 0.0, 13.0])
 
     def test_failure_stops_cycle_but_summary_retains_plan_and_partial_rows(self):
         engine = self.engine([TEST_FREQ, TEST_LEVEL], [b'invalid'])
         result, status = engine.run(['1', '10'])
         self.assertEqual(status, 'error')
         self.assertEqual(len(result[TEST_FREQ]), 1)
-        self.assertEqual(result[TEST_FREQ][0][5], 'error')
+        self.assertEqual(result[TEST_FREQ][0].status, 'error')
         self.assertEqual(engine.summary()[TEST_FREQ], {
             'status': 'error', 'planned': 2, 'total': 1,
             'ok': 0, 'warn': 0, 'fail': 0, 'error': 1,
@@ -127,7 +129,7 @@ class EngineCharacterizationTests(unittest.TestCase):
         ])
         result, status = engine.run(['1', '10'])
         self.assertEqual(status, 'warn')
-        self.assertEqual([row[5] for row in result[TEST_LEVEL]],
+        self.assertEqual([row.status for row in result[TEST_LEVEL]],
                          ['fail', 'ok', 'ok', 'ok', 'ok', 'ok'])
         self.assertEqual(engine.summary()[TEST_LEVEL], {
             'status': 'incomplete', 'planned': 6, 'total': 6,
@@ -157,8 +159,11 @@ class EngineCharacterizationTests(unittest.TestCase):
         engine = self.engine([TEST_FREQ], [b'10000\n', b'0\n'], event=event)
         result, status = engine.run(['1'])
         self.assertEqual(status, 'stopped')
-        self.assertEqual(result[TEST_FREQ][0][5], 'error')
-        self.assertEqual(result[TEST_FREQ][0][6], 'Остановка запрошена во время выдержки')
+        self.assertEqual(result[TEST_FREQ][0], FrequencyResult(
+            reference_frequency_hz=1_000_000.0, measured_frequency_hz=None,
+            error_hz=None, tolerance_hz=None, if_frequency_khz=None,
+            status='error', comment='Остановка запрошена во время выдержки',
+        ))
         self.assertEqual(event.wait_calls, [1, 6.0])
 
         event = FakeEvent()
@@ -182,8 +187,25 @@ class EngineCharacterizationTests(unittest.TestCase):
         engine = self.engine([TEST_LEVEL], [OSError('read broke')])
         result, status = engine.run(['1'])
         self.assertEqual(status, 'error')
-        self.assertEqual(result[TEST_LEVEL][0][5], 'error')
-        self.assertEqual(result[TEST_LEVEL][0][6], 'read broke')
+        self.assertEqual(result[TEST_LEVEL][0], LevelResult(
+            frequency_mhz=1.0, set_level_dbm=-13.0,
+            measured_level_dbm=None, error_db=None, tolerance_db=1.0,
+            status='error', comment='read broke',
+        ))
+
+    def test_generator_frequency_query_failure_returns_result_without_meter_io(self):
+        gen = FakeGenerator(fail_query='FREQ?')
+        meter = FakeMeter()
+        engine = MeasurementEngine(gen, meter, [TEST_FREQ], stop_event=FakeEvent())
+        result, status = engine.run(['1'])
+        self.assertEqual(status, 'error')
+        self.assertEqual(result[TEST_FREQ][0], FrequencyResult(
+            reference_frequency_hz=1_000_000.0, measured_frequency_hz=None,
+            error_hz=None, tolerance_hz=None, if_frequency_khz=None,
+            status='error', comment='query failed',
+        ))
+        self.assertEqual(gen.queries, ['FREQ?'])
+        self.assertEqual(meter.commands, [])
 
     def test_signed_thresholds_and_rounded_frequency_fields(self):
         cases = [(1.0, 'warn'), (-1.0, 'warn'), (1.06, 'fail'), (-1.06, 'fail')]
@@ -194,11 +216,28 @@ class EngineCharacterizationTests(unittest.TestCase):
                 engine = MeasurementEngine(gen, meter, [TEST_FREQ], stop_event=FakeEvent())
                 result, status = engine.run(['0.01'])
                 row = result[TEST_FREQ][0]
-                self.assertEqual(row[2], round(measured_offset, 2))
-                self.assertEqual(row[3], 1.05)
-                self.assertEqual(row[4], 1.23)
-                self.assertEqual(row[5], expected)
+                self.assertEqual(row.reference_frequency_hz, 10000.123)
+                self.assertEqual(row.measured_frequency_hz, 10000.123 + measured_offset)
+                self.assertEqual(row.error_hz, round(measured_offset, 2))
+                self.assertEqual(row.tolerance_hz, 1.05)
+                self.assertEqual(row.if_frequency_khz, 1.23)
+                self.assertEqual(row.status, expected)
                 self.assertEqual(status, 'warn')
+
+    def test_result_models_are_frozen(self):
+        frequency = FrequencyResult(
+            reference_frequency_hz=10000, measured_frequency_hz=10001,
+            error_hz=1, tolerance_hz=1.05, if_frequency_khz=1.23,
+            status='warn', comment='near limit',
+        )
+        level = LevelResult(
+            frequency_mhz=2000, set_level_dbm=0, measured_level_dbm=1.5,
+            error_db=1.5, tolerance_db=2, status='warn', comment='near limit',
+        )
+        with self.assertRaises(FrozenInstanceError):
+            frequency.status = 'ok'
+        with self.assertRaises(FrozenInstanceError):
+            level.status = 'ok'
 
 
 if __name__ == '__main__':
