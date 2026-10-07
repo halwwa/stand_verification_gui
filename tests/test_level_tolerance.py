@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from measurement_engine import MeasurementEngine
+from stand_verification.measurement.engine import MeasurementEngine
 
 
 class LevelToleranceTests(unittest.TestCase):
@@ -17,8 +17,7 @@ class LevelToleranceTests(unittest.TestCase):
                 meter = Mock()
                 meter.readline.return_value = str(measured).encode()
                 engine = MeasurementEngine(Mock(), meter)
-                with patch('measurement_engine.SETTLE_DELAY', 0), \
-                        patch('measurement_engine.time.sleep'):
+                with patch('stand_verification.measurement.level.SETTLE_DELAY', 0):
                     row, status = engine._measure_level(str(frequency), 0)
                 self.assertEqual(row[4], tolerance)
                 self.assertEqual(row[5], expected)

@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stand-verification"
+version = "0.1.0"
+dependencies = ["pyserial", "pyvisa", "pyvisa-py", "openpyxl"]
+
+[tool.setuptools.packages.find]
+include = ["stand_verification*"]

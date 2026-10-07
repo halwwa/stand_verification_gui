@@ -32,3 +32,4 @@ Thumbs.db
 test_save.py
 test_save_result.xlsx
 frequency_test_result.xlsx
+*.egg-info/
