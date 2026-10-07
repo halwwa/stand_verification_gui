@@ -231,6 +231,51 @@ class EngineCharacterizationTests(unittest.TestCase):
         self.assertTrue(event.is_set())
         self.assertEqual(result[TEST_LEVEL], [])
 
+    def test_early_stop_returns_status_after_shutdown(self):
+        for stop_at in ('before_start', 'reset', 'init_wait'):
+            for shutdown_fails in (False, True):
+                with self.subTest(stop_at=stop_at, shutdown_fails=shutdown_fails):
+                    event = FakeEvent(stopped=stop_at == 'before_start',
+                                      wait_results=[stop_at == 'init_wait'])
+
+                    class StoppingGenerator(FakeGenerator):
+                        def write(self, command):
+                            super().write(command)
+                            if command == '*RST' and stop_at == 'reset':
+                                event.set()
+
+                    gen = StoppingGenerator(fail_write='OUTP OFF' if shutdown_fails else None)
+                    meter = FakeMeter()
+                    engine = MeasurementEngine(gen, meter, [TEST_FREQ], stop_event=event)
+                    results, status = engine.run(['1'])
+                    initialized = stop_at != 'before_start'
+                    expected = 'error' if initialized and shutdown_fails else 'stopped'
+                    self.assertEqual(status, expected)
+                    self.assertEqual(engine.final_status, status)
+                    self.assertEqual(engine.summary()['final_status'], status)
+                    snapshot = engine.snapshot()
+                    self.assertEqual(snapshot.final_status, status)
+                    self.assertEqual(snapshot.summary['final_status'], status)
+                    self.assertEqual(results[TEST_FREQ], [])
+                    self.assertEqual(meter.commands, [])
+                    self.assertEqual(gen.queries, [])
+                    if not initialized:
+                        self.assertEqual(gen.commands, [])
+                        self.assertIsNone(engine.shutdown_success)
+                        self.assertEqual(engine.termination_reason,
+                                         'Остановка запрошена до инициализации')
+                    else:
+                        expected_commands = ['*RST', 'OUTP OFF'] if stop_at == 'reset' else [
+                            '*RST', 'OUTP ON', 'FREQ 10 MHz', 'POW -13', 'OUTP OFF',
+                        ]
+                        self.assertEqual(gen.commands, expected_commands)
+                        self.assertEqual(engine.shutdown_success, not shutdown_fails)
+                        self.assertEqual(engine.termination_reason, 'Остановка запрошена')
+                        self.assertEqual(engine.shutdown_error,
+                                         'write failed' if shutdown_fails else '')
+                        self.assertEqual(engine.diagnostics,
+                                         ['Ошибка OUTP OFF: write failed'] if shutdown_fails else [])
+
     def test_frequency_setting_failure_and_meter_read_failure(self):
         gen = FakeGenerator(fail_write='FREQ 1 MHz')
         engine = self.engine([TEST_FREQ], gen=gen)

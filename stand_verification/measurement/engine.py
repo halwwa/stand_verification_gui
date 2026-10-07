@@ -24,6 +24,10 @@ from stand_verification.devices.smb100a import SMB100A
 from stand_verification.devices.sk3_50 import SK350
 
 
+class _StopRequested(Exception):
+    """Завершить запуск через общий finally до формирования результата."""
+
+
 # ============================================================
 #                    ОСНОВНОЙ ДВИЖОК
 # ============================================================
@@ -173,15 +177,11 @@ class MeasurementEngine:
         point_idx = 0
         try:
             if self._stopped():
-                self.termination_reason = 'Остановка запрошена до инициализации'
-                self.final_status = 'stopped'
-                return self.results, self.final_status
+                raise _StopRequested('Остановка запрошена до инициализации')
             init_started = True
             self._init_generator()
             if self._stopped():
-                self.termination_reason = 'Остановка запрошена'
-                self.final_status = 'stopped'
-                return self.results, self.final_status
+                raise _StopRequested('Остановка запрошена')
             for freq_i, freq_mhz in enumerate(freqs, start=1):
                 if self._stopped():
                     self.termination_reason = 'Остановка запрошена'
@@ -267,6 +267,9 @@ class MeasurementEngine:
                 else:
                     self.final_status = 'warn' if self._any_warn else 'done'
                     self.termination_reason = 'Все запланированные измерения завершены'
+        except _StopRequested as e:
+            self.termination_reason = str(e)
+            self.final_status = 'stopped'
         except Exception as e:
             failed = True
             self.final_status = 'error'
