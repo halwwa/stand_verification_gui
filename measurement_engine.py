@@ -32,7 +32,8 @@ U_LIST   = [-13.0, 0.0, 13.0]     # для остальных
 
 # Допуски
 FREQ_TOLERANCE_FORMULA = lambda f_hz: 5e-6 * abs(f_hz) + 1.0   # Гц
-LEVEL_TOLERANCE_DB = 1.0                                        # дБ
+LEVEL_TOLERANCE_DB = 1.0                                        # ниже 2000 МГц
+LEVEL_TOLERANCE_HIGH_DB = 2.0                                   # от 2000 МГц
 
 # Порог «жёлтой зоны» — доля от допуска
 TOLERANCE_RATIO_WARN = 0.7
@@ -328,6 +329,7 @@ class MeasurementEngine:
         row = [freq_mhz, level_set_dbm, level_meas_dbm,
                error_db, tolerance_db, status_code, comment_emoji]
         """
+        tolerance = LEVEL_TOLERANCE_HIGH_DB if float(freq_mhz) >= 2000 else LEVEL_TOLERANCE_DB
         try:
             self.gen.write(f"POW {level_dbm}")
         except Exception as e:
@@ -343,12 +345,12 @@ class MeasurementEngine:
             oup = float(raw.decode('utf-8', errors='ignore').strip())
 
             ku = oup - level_dbm
-            status, emoji = evaluate(ku, LEVEL_TOLERANCE_DB)
+            status, emoji = evaluate(ku, tolerance)
 
-            self.log(f"   level: {ku:+.2f} дБ, допуск ±{LEVEL_TOLERANCE_DB:.2f} дБ → {emoji}")
+            self.log(f"   level: {ku:+.2f} дБ, допуск ±{tolerance:.2f} дБ → {emoji}")
 
             row = [float(freq_mhz), level_dbm, round(oup, 2),
-                   round(ku, 2), LEVEL_TOLERANCE_DB, status, emoji]
+                   round(ku, 2), tolerance, status, emoji]
             return row, status
 
         except Exception as e:
