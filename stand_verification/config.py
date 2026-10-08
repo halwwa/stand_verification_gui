@@ -12,7 +12,7 @@ U_LIST = [-13.0, 0.0, 13.0]       # для остальных частот
 SETTLE_DELAY = 10.0
 
 # Задержка после установки фильтра перед RMS? (сек)
-NOISE_SETTLE_DELAY = 5.0
+NOISE_SETTLE_DELAY = 15.0
 
 # Начальный уровень генератора (dBm)
 INITIAL_POWER_DBM = -13
