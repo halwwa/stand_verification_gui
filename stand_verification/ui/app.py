@@ -1,7 +1,7 @@
-## -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Стенд автоматизированной поверки радиоприборов.
-Версия 2.0 — единый движок MeasurementEngine.
+Версия 2.1 — диалог при провале (fail), уточнения по логу и допускам.
 """
 
 import os
@@ -25,18 +25,14 @@ from stand_verification.reports.excel import export_excel
 #                    НАЗВАНИЯ ТЕСТОВ (для GUI)
 # ============================================================
 
-# Названия, которые показывает GUI в списке тестов
 TEST_NAMES = [
     ("Тест 1: Погрешность измерения частоты входного сигнала", TEST_FREQ),
     ("Тест 2: Погрешность измерения уровня",                    TEST_LEVEL),
-    ("Тест 3: К-гармоник (С6-22)",                              None),   # не реализован
-    ("Тест 4: СВЧ тракт (SMB100A)",                             None),   # не реализован
-    ("Тест 5: Нестабильность частоты",                          TEST_FM_NOISE),  # заглушка
-    ("Тест 6: Паразитная девиация",                             TEST_PM_NOISE),  # заглушка
+    ("Тест 3: К-гармоник (С6-22)",                              None),
+    ("Тест 4: СВЧ тракт (SMB100A)",                             None),
+    ("Тест 5: Нестабильность частоты",                          TEST_FM_NOISE),
+    ("Тест 6: Паразитная девиация",                             TEST_PM_NOISE),
 ]
-
-# Маппинг: имя теста в GUI → идентификатор в движке
-TEST_NAME_TO_ID = {name: tid for name, tid in TEST_NAMES}
 
 
 # ============================================================
@@ -178,7 +174,6 @@ class StandApp:
         ttk.Button(right, text="☐ Снять выделение",
                    command=self.on_deselect_all_tests).pack(fill="x", pady=2)
 
-        # Заполняем список тестов
         self.test_items = []
         for name, test_id in TEST_NAMES:
             item_id = self.tests_tree.insert("", "end",
@@ -187,7 +182,7 @@ class StandApp:
             self.test_items.append({
                 "id": item_id,
                 "name": name,
-                "test_id": test_id,   # идентификатор для движка (или None)
+                "test_id": test_id,
                 "checked": True,
                 "status": "idle",
             })
@@ -339,7 +334,6 @@ class StandApp:
     # ===================================================
 
     def on_run_selected(self):
-        """Запуск ТОЛЬКО выделенных тестов."""
         sel = [t for t in self.test_items if t["checked"]]
         if not sel:
             messagebox.showinfo("Нет тестов", "Не выбран ни один тест.")
@@ -347,7 +341,6 @@ class StandApp:
         self._start_engine(sel)
 
     def on_start_all(self):
-        """Запуск всех выделенных тестов."""
         sel = [t for t in self.test_items if t["checked"]]
         if not sel:
             messagebox.showinfo("Нет тестов", "Не выбран ни один тест.")
@@ -357,12 +350,10 @@ class StandApp:
         self._start_engine(sel)
 
     def _start_engine(self, selected_items):
-        """Общая точка запуска движка — и для кнопки «выбранный», и для «всех»."""
         if self._controls_busy() or self.initializing or self._connections_active():
             messagebox.showinfo("Подождите", "Тесты уже выполняются.")
             return
 
-        # Собираем список активных тестов из чек-боксов
         active_ids = []
         not_impl_names = []
         for t in selected_items:
@@ -378,7 +369,6 @@ class StandApp:
                                 "и «Тест 2: Погрешность измерения уровня».")
             return
 
-        # Проверка подключений
         card_sk3 = self.cards[0]
         card_gen = self.cards[2]
         if not card_sk3.is_connected():
@@ -390,11 +380,9 @@ class StandApp:
                                  "Сначала подключите SMB100A (третья карточка).")
             return
 
-        # Автосброс статусов, если все уже done
         if all(t["status"] == "done" for t in selected_items):
             self._reset_statuses_silent()
 
-        # Блокируем кнопки
         self.tests_running = True
         self.stop_event = threading.Event()
         self.report_result = None
@@ -408,7 +396,6 @@ class StandApp:
         self.reset_btn.state(["disabled"])
         self.stop_btn.configure(state="normal")
 
-        # Помечаем выбранные тесты «выполняется»
         for t in selected_items:
             self._set_test_status(t, "running", "● Ожидание…")
 
@@ -419,9 +406,70 @@ class StandApp:
         self.engine_thread = threading.Thread(
             target=self._engine_worker,
             args=(card_sk3.inst, card_gen.inst, active_ids,
-                   selected_items, not_impl_names, report_target),
+                  selected_items, not_impl_names, report_target),
         )
         self.engine_thread.start()
+
+    # ===================================================
+    #        ДИАЛОГ ПРИ ПРОВАЛЕ (fail)
+    # ===================================================
+
+    def _confirm_fail_sync(self, freq_mhz, level_dbm, error_value,
+                           tolerance_value, stage):
+        """
+        Вызывается ИЗ ФОНОВОГО ПОТОКА движка при провале допуска (fail).
+        Возвращает True (продолжить) / False (остановить).
+
+        Показывает модальное окно через главный поток.
+        Фоновый поток блокируется на Event.wait() до ответа оператора
+        (или до таймаута).
+        """
+        # Если приложение закрывается — не задаём вопрос, просто продолжаем
+        if self.close_requested or self.stop_event.is_set():
+            return True
+
+        result_holder = {'decision': True}
+        done_event = threading.Event()
+
+        def show_dialog():
+            try:
+                if stage == 'freq':
+                    title = 'Провал допуска — частота'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"Погрешность: {error_value:+.2f} Гц\n"
+                            f"Допуск: ±{tolerance_value:.2f} Гц")
+                else:
+                    title = 'Провал допуска — уровень'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"Уровень: {level_dbm:+.0f} dBm\n"
+                            f"Погрешность: {error_value:+.2f} дБ\n"
+                            f"Допуск: ±{tolerance_value:.2f} дБ")
+
+                # Логируем факт провала
+                self.log(f"🔴 Провал: {body.replace(chr(10), ' | ')}")
+
+                answer = messagebox.askyesno(
+                    title,
+                    f"{body}\n\n"
+                    f"Продолжить выполнение теста?\n\n"
+                    f"«Да» — продолжить (итог теста всё равно будет красным).\n"
+                    f"«Нет» — остановить прогон."
+                )
+                result_holder['decision'] = bool(answer)
+                if not answer:
+                    self.log("⏹ Оператор выбрал «Остановить» при провале.")
+                else:
+                    self.log("▶ Оператор выбрал «Продолжить» при провале.")
+            except Exception as e:
+                self.log(f"⚠ Ошибка в диалоге провала: {e}")
+            finally:
+                done_event.set()
+
+        self.callbacks.put(show_dialog)
+
+        # Ждём ответа не более 10 минут
+        done_event.wait(timeout=600)
+        return result_holder['decision']
 
     # ===================================================
     #        ФОНОВЫЙ ПОТОК ДВИЖКА
@@ -432,11 +480,11 @@ class StandApp:
         engine = MeasurementEngine(
             gen=gen_inst, sk3=sk3_inst, active_tests=active_ids,
             stop_event=self.stop_event,
+            confirm_callback=self._confirm_fail_sync,
             log_callback=lambda msg: self.callbacks.put(lambda: self.log(msg)),
         )
         self.engine = engine
         try:
-            # Уведомление о нереализованных
             for nm in not_impl_names:
                 self.callbacks.put(lambda nm=nm: self.log(
                     f"⚠ «{nm}» — в разработке, пропускается."))
@@ -480,16 +528,7 @@ class StandApp:
                                     ('' if saved_path else '. Отчёт не сохранён.'))
 
     def _paint_tests_by_results(self, engine, selected_items):
-        """
-        Красит статус каждого теста ПО ЕГО РЕЗУЛЬТАТАМ.
-        Для каждого активного теста смотрим его строки в engine.results,
-        определяем итоговый статус (ok/warn/fail) и применяем цвет.
-        """
         def evaluate_test(info):
-            """
-            rows — список строк результатов теста.
-            Возвращает (tag, label) — статус для GUI.
-            """
             return {
                 'not_started': ('idle', 'Не начат'),
                 'incomplete': ('warn', 'Прерван / неполный'),
@@ -502,8 +541,7 @@ class StandApp:
         for t in selected_items:
             tid = t["test_id"]
             if tid is None:
-                continue   # нереализованный тест — не трогаем
-
+                continue
             tag, label = evaluate_test(summary.get(tid, {}))
             self._set_test_status(t, tag, label)
 
