@@ -25,9 +25,28 @@ class LevelResult:
 
 
 @dataclass(frozen=True)
+class NoiseResult:
+    """
+    Результат измерения шумов (АМ / ЧМ / ФМ).
+    Единица зависит от режима:
+      - AM → шум в % (проценты)
+      - FM → шум в Гц (герцы)
+      - PM → шум в рад (радианы)
+    """
+    frequency_mhz: float              # частота несущей, МГц
+    band_low_khz: float               # нижняя граница полосы фильтра, кГц
+    band_high_khz: float              # верхняя граница полосы фильтра, кГц
+    noise_value: Optional[float]      # измеренное СКЗ шума
+    tolerance: Optional[float]        # допуск в тех же единицах
+    unit: str                         # '%' | 'Гц' | 'рад'
+    status: str
+    comment: str
+
+
+@dataclass(frozen=True)
 class RunSnapshot:
     active_tests: tuple
-    results: Dict[str, List[Union[FrequencyResult, LevelResult]]]
+    results: Dict[str, List[Union[FrequencyResult, LevelResult, NoiseResult]]]
     final_status: str
     termination_reason: str
     shutdown_success: object
