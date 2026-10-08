@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Стенд автоматизированной поверки радиоприборов.
-Версия 2.1 — диалог при провале (fail), уточнения по логу и допускам.
+Версия 2.2 — добавлены тесты АМ/ЧМ/ФМ шумов.
 """
 
 import os
@@ -28,10 +28,9 @@ from stand_verification.reports.excel import export_excel
 TEST_NAMES = [
     ("Тест 1: Погрешность измерения частоты входного сигнала", TEST_FREQ),
     ("Тест 2: Погрешность измерения уровня",                    TEST_LEVEL),
-    ("Тест 3: К-гармоник (С6-22)",                              None),
-    ("Тест 4: СВЧ тракт (SMB100A)",                             None),
-    ("Тест 5: Нестабильность частоты",                          TEST_FM_NOISE),
-    ("Тест 6: Паразитная девиация",                             TEST_PM_NOISE),
+    ("Тест 3: АМ шум",                                          TEST_AM_NOISE),
+    ("Тест 4: ЧМ шум",                                          TEST_FM_NOISE),
+    ("Тест 5: ФМ шум",                                          TEST_PM_NOISE),
 ]
 
 
@@ -214,7 +213,7 @@ class StandApp:
                                     command=self.on_start_all)
         self.start_btn.pack(side="left", ipadx=10, ipady=4)
 
-        self.stop_btn = tk.Button(globals_row, text="■  АВАРИЙНЫЙ СТОП",
+        self.stop_btn = tk.Button(globals_row, text="■  СТОП",
                                   bg="#c01e1e", fg="white",
                                   activebackground="#a01818", activeforeground="white",
                                   disabledforeground="#999999",
@@ -364,9 +363,7 @@ class StandApp:
 
         if not active_ids:
             messagebox.showinfo("Нет реализованных тестов",
-                                "Все выбранные тесты пока в разработке.\n"
-                                "Доступны: «Тест 1: Погрешность измерения частоты входного сигнала»\n"
-                                "и «Тест 2: Погрешность измерения уровня».")
+                                "Все выбранные тесты пока в разработке.")
             return
 
         card_sk3 = self.cards[0]
@@ -411,20 +408,11 @@ class StandApp:
         self.engine_thread.start()
 
     # ===================================================
-    #        ДИАЛОГ ПРИ ПРОВАЛЕ (fail)
+    #        ДИАЛОГ ПРИ ПРОВАЛЕ
     # ===================================================
 
     def _confirm_fail_sync(self, freq_mhz, level_dbm, error_value,
                            tolerance_value, stage):
-        """
-        Вызывается ИЗ ФОНОВОГО ПОТОКА движка при провале допуска (fail).
-        Возвращает True (продолжить) / False (остановить).
-
-        Показывает модальное окно через главный поток.
-        Фоновый поток блокируется на Event.wait() до ответа оператора
-        (или до таймаута).
-        """
-        # Если приложение закрывается — не задаём вопрос, просто продолжаем
         if self.close_requested or self.stop_event.is_set():
             return True
 
@@ -438,14 +426,33 @@ class StandApp:
                     body = (f"Частота: {freq_mhz:g} МГц\n"
                             f"Погрешность: {error_value:+.2f} Гц\n"
                             f"Допуск: ±{tolerance_value:.2f} Гц")
-                else:
+                elif stage == 'level':
                     title = 'Провал допуска — уровень'
                     body = (f"Частота: {freq_mhz:g} МГц\n"
                             f"Уровень: {level_dbm:+.0f} dBm\n"
                             f"Погрешность: {error_value:+.2f} дБ\n"
                             f"Допуск: ±{tolerance_value:.2f} дБ")
+                elif stage == 'am_noise':
+                    title = 'Провал допуска — АМ шум'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"СКЗ шум: {error_value:.3f} %\n"
+                            f"Допуск: ±{tolerance_value:.3f} %")
+                elif stage == 'fm_noise':
+                    title = 'Провал допуска — ЧМ шум'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"СКЗ шум: {error_value:.1f} Гц\n"
+                            f"Допуск: ±{tolerance_value:.1f} Гц")
+                elif stage == 'pm_noise':
+                    title = 'Провал допуска — ФМ шум'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"СКЗ шум: {error_value:.3f} рад\n"
+                            f"Допуск: ±{tolerance_value:.3f} рад")
+                else:
+                    title = 'Провал допуска'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"Значение: {error_value}\n"
+                            f"Допуск: {tolerance_value}")
 
-                # Логируем факт провала
                 self.log(f"🔴 Провал: {body.replace(chr(10), ' | ')}")
 
                 answer = messagebox.askyesno(
@@ -466,8 +473,6 @@ class StandApp:
                 done_event.set()
 
         self.callbacks.put(show_dialog)
-
-        # Ждём ответа не более 10 минут
         done_event.wait(timeout=600)
         return result_holder['decision']
 
