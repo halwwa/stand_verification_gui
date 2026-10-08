@@ -36,26 +36,38 @@ class MeasurementEngine:
     """
     Единый движок. Один цикл по частотам.
     Внутри каждой частоты — выбранные измерения.
+
+    Логика статуса:
+      - 'ok'   (🟢) — норма;
+      - 'warn' (🟡) — в допуске, но близко к границе; НЕ спрашивает, идём дальше;
+      - 'fail' (🔴) — вне допуска; спрашиваем оператора (если есть confirm_callback);
+                       итог ВСЕГДА 'error' (красный), даже если оператор продолжил;
+      - 'error'      — технический сбой (таймаут, nan); останавливаем прогон сразу.
     """
 
-    def __init__(self, gen, sk3, active_tests=None, log_callback=None, stop_event=None):
+    def __init__(self, gen, sk3, active_tests=None, log_callback=None,
+                 stop_event=None, confirm_callback=None):
         """
         :param gen: объект pyvisa-сессии генератора SMB100A
         :param sk3: объект serial.Serial для СК3-50
         :param active_tests: список идентификаторов активных тестов.
-                             По умолчанию — все реализованные (freq, level).
         :param log_callback: функция f(msg: str)
+        :param stop_event: threading.Event — сигнал остановки
+        :param confirm_callback: функция обратного вызова для диалога при 'fail'.
+            Сигнатура: confirm_callback(freq_mhz, level_dbm, error_value,
+                                        tolerance_value, stage) -> bool.
+            Должна вернуть True (продолжить) / False (остановить).
         """
         self.gen = gen if isinstance(gen, SMB100A) else SMB100A(gen)
         self.sk3 = sk3 if isinstance(sk3, SK350) else SK350(sk3)
         self.log = log_callback if log_callback is not None else (lambda msg: None)
         self.stop_event = stop_event if stop_event is not None else threading.Event()
+        self.confirm_callback = confirm_callback
 
         if active_tests is None:
             active_tests = [TEST_FREQ, TEST_LEVEL]
         self.active_tests = list(active_tests)
 
-        # Результаты по каждому тесту — свой список
         self.results = {
             TEST_FREQ: [],
             TEST_LEVEL: [],
@@ -64,11 +76,9 @@ class MeasurementEngine:
             TEST_PM_NOISE: [],
         }
 
-        # Общий итоговый статус (done / warn / error)
         self.final_status = 'not_started'
-
-        # Признак, что где-то встретился warn / fail
         self._any_warn = False
+        self._any_fail = False
         self.shutdown_success = None
         self.shutdown_error = ''
         self.termination_reason = ''
@@ -120,7 +130,6 @@ class MeasurementEngine:
     # --------------------------------------------------------
 
     def _count_total_points(self, freqs):
-        """Сколько всего измерений будет сделано (для прогресс-бара)."""
         total = 0
         for f_mhz in freqs:
             f_val = float(f_mhz)
@@ -129,7 +138,6 @@ class MeasurementEngine:
             if TEST_LEVEL in self.active_tests:
                 levels = U_LIST_0 if f_val in (0.01, 0.1) else U_LIST
                 total += len(levels)
-            # нереализованные не считаем
         return total
 
     # --------------------------------------------------------
@@ -140,8 +148,7 @@ class MeasurementEngine:
         """
         :param freqs: список частот (МГц). По умолчанию F_LIST.
         :param progress_callback: f(idx, total, info_str) — перед каждой точкой.
-                                  Может возбудить InterruptedError для остановки.
-        :return: (results_dict, final_status), results contain FrequencyResult/LevelResult.
+        :return: (results_dict, final_status)
         """
         if freqs is None:
             freqs = F_LIST
@@ -149,6 +156,7 @@ class MeasurementEngine:
         self.results = {k: [] for k in self.results}
         self.final_status = 'not_started'
         self._any_warn = False
+        self._any_fail = False
         self.shutdown_success = None
         self.shutdown_error = ''
         self.termination_reason = ''
@@ -157,7 +165,8 @@ class MeasurementEngine:
         total_points = self._count_total_points(freqs)
         self._planned = {
             TEST_FREQ: sum(1 for _ in freqs) if TEST_FREQ in self.active_tests else 0,
-            TEST_LEVEL: sum(len(U_LIST_0 if float(f) in (0.01, 0.1) else U_LIST) for f in freqs)
+            TEST_LEVEL: sum(len(U_LIST_0 if float(f) in (0.01, 0.1) else U_LIST)
+                            for f in freqs)
                         if TEST_LEVEL in self.active_tests else 0,
         }
 
@@ -165,7 +174,6 @@ class MeasurementEngine:
         self._log(f"Активные тесты: {', '.join(self.active_tests)}")
         self._log(f"Частот в цикле: {len(freqs)}. Всего измерений: {total_points}")
 
-        # Проверяем, не выбраны ли только нереализованные тесты
         implemented = [t for t in self.active_tests if t not in NOT_IMPLEMENTED]
         if not implemented:
             self._diagnose("Не выбрано ни одного реализованного теста.")
@@ -182,12 +190,15 @@ class MeasurementEngine:
             self._init_generator()
             if self._stopped():
                 raise _StopRequested('Остановка запрошена')
+
             for freq_i, freq_mhz in enumerate(freqs, start=1):
                 if self._stopped():
                     self.termination_reason = 'Остановка запрошена'
                     self.final_status = 'stopped'
                     break
+
                 self._log(f"─── Частота {freq_mhz} МГц ({freq_i}/{len(freqs)}) ───")
+
                 try:
                     self.gen.set_frequency_mhz(freq_mhz)
                 except Exception as e:
@@ -196,7 +207,10 @@ class MeasurementEngine:
                     self.final_status = 'error'
                     failed = True
                     break
+
                 f_val = float(freq_mhz)
+
+                # ---------- Тест частоты ----------
                 if TEST_FREQ in self.active_tests:
                     if self._stopped():
                         self.termination_reason = 'Остановка запрошена'
@@ -205,14 +219,17 @@ class MeasurementEngine:
                     point_idx += 1
                     if progress_callback:
                         try:
-                            progress_callback(point_idx, total_points, f"Частота {freq_mhz} МГц — измерение частоты")
+                            progress_callback(point_idx, total_points,
+                                              f"Частота {freq_mhz} МГц — измерение частоты")
                         except InterruptedError:
                             self.stop_event.set()
                             self.termination_reason = 'Остановка запрошена'
                             self.final_status = 'stopped'
                             break
+
                     row = self._measure_freq(freq_mhz)
                     self.results[TEST_FREQ].append(row)
+
                     if row.status == 'error':
                         if self._stopped():
                             self.termination_reason = row.comment
@@ -223,9 +240,23 @@ class MeasurementEngine:
                         self.termination_reason = row.comment
                         self._diagnose(row.comment)
                         break
+
+                    if row.status == 'fail':
+                        # Оператор остановил при красном?
+                        if 'остановлено оператором' in (row.comment or ''):
+                            self.termination_reason = (
+                                'Остановлено оператором при провале частоты')
+                            self.final_status = 'error'
+                            break
+                        # Оператор продолжил — запоминаем, что провал был
+                        self._any_fail = True
+
                     self._any_warn |= row.status in ('warn', 'fail')
-                if failed or self.final_status == 'stopped':
+
+                if failed or self.final_status in ('stopped', 'error'):
                     break
+
+                # ---------- Тест уровня ----------
                 if TEST_LEVEL in self.active_tests:
                     levels = U_LIST_0 if f_val in (0.01, 0.1) else U_LIST
                     for lv in levels:
@@ -236,14 +267,17 @@ class MeasurementEngine:
                         point_idx += 1
                         if progress_callback:
                             try:
-                                progress_callback(point_idx, total_points, f"Частота {freq_mhz} МГц — уровень {lv:+.0f} dBm")
+                                progress_callback(point_idx, total_points,
+                                                  f"Частота {freq_mhz} МГц — уровень {lv:+.0f} dBm")
                             except InterruptedError:
                                 self.stop_event.set()
                                 self.termination_reason = 'Остановка запрошена'
                                 self.final_status = 'stopped'
                                 break
+
                         row = self._measure_level(freq_mhz, lv)
                         self.results[TEST_LEVEL].append(row)
+
                         if row.status == 'error':
                             if self._stopped():
                                 self.termination_reason = row.comment
@@ -254,19 +288,42 @@ class MeasurementEngine:
                             self.termination_reason = row.comment
                             self._diagnose(row.comment)
                             break
+
+                        if row.status == 'fail':
+                            if 'остановлено оператором' in (row.comment or ''):
+                                self.termination_reason = (
+                                    'Остановлено оператором при провале уровня')
+                                self.final_status = 'error'
+                                break
+                            self._any_fail = True
+
                         self._any_warn |= row.status in ('warn', 'fail')
-                    if failed or self.final_status == 'stopped':
+
+                    if failed or self.final_status in ('stopped', 'error'):
                         break
+
+                # ---------- Нереализованные тесты ----------
                 for t in self.active_tests:
                     if t in NOT_IMPLEMENTED:
                         self._log(f"   (тест «{t}» пока в разработке — пропущен)")
+
             else:
+                # Цикл прошёл до конца без break
                 if self._stopped():
                     self.final_status = 'stopped'
                     self.termination_reason = 'Остановка запрошена'
-                else:
-                    self.final_status = 'warn' if self._any_warn else 'done'
+                elif self._any_fail:
+                    # Был провал, но оператор продолжил → итог всё равно КРАСНЫЙ
+                    self.final_status = 'error'
+                    self.termination_reason = (
+                        'Провалы в точках; прогон продолжен оператором')
+                elif self._any_warn:
+                    self.final_status = 'warn'
                     self.termination_reason = 'Все запланированные измерения завершены'
+                else:
+                    self.final_status = 'done'
+                    self.termination_reason = 'Все запланированные измерения завершены'
+
         except _StopRequested as e:
             self.termination_reason = str(e)
             self.final_status = 'stopped'
@@ -282,42 +339,43 @@ class MeasurementEngine:
                 self.final_status = 'error'
             if self.final_status == 'not_started':
                 self.final_status = 'error'
+
         return self.results, self.final_status
 
     # --------------------------------------------------------
-    #                    ИЗМЕРЕНИЕ ЧАСТОТЫ
+    #                    ИЗМЕРЕНИЯ
     # --------------------------------------------------------
 
     def _measure_freq(self, freq_mhz) -> FrequencyResult:
-        return measure_frequency(self.gen, self.sk3, self.stop_event, self._log, freq_mhz)
-
-    # --------------------------------------------------------
-    #                    ИЗМЕРЕНИЕ УРОВНЯ
-    # --------------------------------------------------------
+        return measure_frequency(
+            self.gen, self.sk3, self.stop_event, self._log, freq_mhz,
+            confirm_callback=self.confirm_callback,
+        )
 
     def _measure_level(self, freq_mhz, level_dbm) -> LevelResult:
-        return measure_level(self.gen, self.sk3, self.stop_event, self._log,
-                             freq_mhz, level_dbm)
+        return measure_level(
+            self.gen, self.sk3, self.stop_event, self._log, freq_mhz, level_dbm,
+            confirm_callback=self.confirm_callback,
+        )
 
     # --------------------------------------------------------
-    #                    СОХРАНЕНИЕ
+    #                    СНИМОК / СВОДКА
     # --------------------------------------------------------
 
     def snapshot(self):
         from stand_verification.models import RunSnapshot
         return RunSnapshot(
-            active_tests=tuple(self.active_tests), results=deepcopy(self.results),
-            final_status=self.final_status, termination_reason=self.termination_reason,
-            shutdown_success=self.shutdown_success, shutdown_error=self.shutdown_error,
-            diagnostics=tuple(self.diagnostics), summary=deepcopy(self.summary()),
+            active_tests=tuple(self.active_tests),
+            results=deepcopy(self.results),
+            final_status=self.final_status,
+            termination_reason=self.termination_reason,
+            shutdown_success=self.shutdown_success,
+            shutdown_error=self.shutdown_error,
+            diagnostics=tuple(self.diagnostics),
+            summary=deepcopy(self.summary()),
         )
 
-    # --------------------------------------------------------
-    #                    СВОДКА
-    # --------------------------------------------------------
-
     def summary(self):
-        """Возвращает dict со сводкой по каждому тесту."""
         out = {}
         for key, rows in self.results.items():
             if key not in self.active_tests or key in NOT_IMPLEMENTED:
@@ -328,9 +386,12 @@ class MeasurementEngine:
             warn = sum(1 for r in rows if r.status == 'warn')
             fail = sum(1 for r in rows if r.status == 'fail')
             error = sum(1 for r in rows if r.status == 'error')
-            complete = total == planned and error == 0 and fail == 0
-            status = ('error' if error else 'not_started' if total == 0 else
-                      'incomplete' if not complete else 'warn' if warn or fail else 'done')
+            complete = total == planned and error == 0
+            status = ('error' if error else
+                      'not_started' if total == 0 else
+                      'incomplete' if not complete else
+                      'warn' if warn or fail else
+                      'done')
             out[key] = {'status': status, 'planned': planned, 'total': total,
                         'ok': ok, 'warn': warn, 'fail': fail, 'error': error}
         out['final_status'] = self.final_status
