@@ -4,7 +4,7 @@ F_LIST = ['0.01', '0.1', '1', '10', '50', '100', '250', '500',
           '1000', '1500', '2000', '2500', '3000']
 U_LIST_0 = [-13.0, 0.0]
 U_LIST = [-13.0, 0.0, 13.0]
-SETTLE_DELAY = 6.0
+SETTLE_DELAY = 10.0
 INITIAL_POWER_DBM = -13
 TEST_FREQ = 'freq'
 TEST_LEVEL = 'level'
