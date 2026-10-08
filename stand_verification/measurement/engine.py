@@ -2,24 +2,22 @@
 """
 Единый движок измерений.
 Один цикл по частотам, внутри которого выполняются ВСЕ выбранные тесты.
-
-Активные тесты передаются списком, например:
-    ['freq', 'level']
-    ['freq', 'level', 'am_noise', 'fm_noise', 'pm_noise']
-
-Нереализованные тесты (am_noise, fm_noise, pm_noise) — пока пропускаются
-с сообщением в лог.
 """
 
 import threading
 from copy import deepcopy
 from stand_verification.config import (
-    F_LIST, U_LIST_0, U_LIST, INITIAL_POWER_DBM, TEST_FREQ, TEST_LEVEL,
+    F_LIST, U_LIST_0, U_LIST, INITIAL_POWER_DBM, NOISE_POWER_DBM,
+    TEST_FREQ, TEST_LEVEL,
     TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE, NOT_IMPLEMENTED,
+    SKIP_FOR_FM_PM_MHZ,
 )
 from stand_verification.measurement.frequency import measure_frequency
 from stand_verification.measurement.level import measure_level
-from stand_verification.models import FrequencyResult, LevelResult
+from stand_verification.measurement.am_noise import measure_am_noise
+from stand_verification.measurement.fm_noise import measure_fm_noise
+from stand_verification.measurement.pm_noise import measure_pm_noise
+from stand_verification.models import FrequencyResult, LevelResult, NoiseResult
 from stand_verification.devices.smb100a import SMB100A
 from stand_verification.devices.sk3_50 import SK350
 
@@ -28,10 +26,6 @@ class _StopRequested(Exception):
     """Завершить запуск через общий finally до формирования результата."""
 
 
-# ============================================================
-#                    ОСНОВНОЙ ДВИЖОК
-# ============================================================
-
 class MeasurementEngine:
     """
     Единый движок. Один цикл по частотам.
@@ -39,25 +33,14 @@ class MeasurementEngine:
 
     Логика статуса:
       - 'ok'   (🟢) — норма;
-      - 'warn' (🟡) — в допуске, но близко к границе; НЕ спрашивает, идём дальше;
-      - 'fail' (🔴) — вне допуска; спрашиваем оператора (если есть confirm_callback);
-                       итог ВСЕГДА 'error' (красный), даже если оператор продолжил;
-      - 'error'      — технический сбой (таймаут, nan); останавливаем прогон сразу.
+      - 'warn' (🟡) — в допуске, но близко к границе; НЕ спрашивает;
+      - 'fail' (🔴) — вне допуска; спрашивает оператора (если confirm_callback);
+                       итог ВСЕГДА 'error' (красный), даже если продолжили;
+      - 'error'      — технический сбой; останавливаем прогон сразу.
     """
 
     def __init__(self, gen, sk3, active_tests=None, log_callback=None,
                  stop_event=None, confirm_callback=None):
-        """
-        :param gen: объект pyvisa-сессии генератора SMB100A
-        :param sk3: объект serial.Serial для СК3-50
-        :param active_tests: список идентификаторов активных тестов.
-        :param log_callback: функция f(msg: str)
-        :param stop_event: threading.Event — сигнал остановки
-        :param confirm_callback: функция обратного вызова для диалога при 'fail'.
-            Сигнатура: confirm_callback(freq_mhz, level_dbm, error_value,
-                                        tolerance_value, stage) -> bool.
-            Должна вернуть True (продолжить) / False (остановить).
-        """
         self.gen = gen if isinstance(gen, SMB100A) else SMB100A(gen)
         self.sk3 = sk3 if isinstance(sk3, SK350) else SK350(sk3)
         self.log = log_callback if log_callback is not None else (lambda msg: None)
@@ -138,6 +121,20 @@ class MeasurementEngine:
             if TEST_LEVEL in self.active_tests:
                 levels = U_LIST_0 if f_val in (0.01, 0.1) else U_LIST
                 total += len(levels)
+            if TEST_AM_NOISE in self.active_tests:
+                if f_val == 0.01 or f_val == 0.1:
+                    total += 1
+                else:
+                    total += 5   # 0.3-3.4 + 4 полосы 0.02-*
+            if TEST_FM_NOISE in self.active_tests:
+                if f_val not in SKIP_FOR_FM_PM_MHZ:
+                    if f_val == 1:
+                        total += 6
+                    else:
+                        total += 5
+            if TEST_PM_NOISE in self.active_tests:
+                if f_val not in SKIP_FOR_FM_PM_MHZ:
+                    total += 3
         return total
 
     # --------------------------------------------------------
@@ -145,11 +142,6 @@ class MeasurementEngine:
     # --------------------------------------------------------
 
     def run(self, freqs=None, progress_callback=None):
-        """
-        :param freqs: список частот (МГц). По умолчанию F_LIST.
-        :param progress_callback: f(idx, total, info_str) — перед каждой точкой.
-        :return: (results_dict, final_status)
-        """
         if freqs is None:
             freqs = F_LIST
 
@@ -168,6 +160,16 @@ class MeasurementEngine:
             TEST_LEVEL: sum(len(U_LIST_0 if float(f) in (0.01, 0.1) else U_LIST)
                             for f in freqs)
                         if TEST_LEVEL in self.active_tests else 0,
+            TEST_AM_NOISE: sum(
+                (1 if float(f) in (0.01, 0.1) else 5) for f in freqs
+            ) if TEST_AM_NOISE in self.active_tests else 0,
+            TEST_FM_NOISE: sum(
+                ((6 if float(f) == 1 else 5) if float(f) not in SKIP_FOR_FM_PM_MHZ else 0)
+                for f in freqs
+            ) if TEST_FM_NOISE in self.active_tests else 0,
+            TEST_PM_NOISE: sum(
+                (3 if float(f) not in SKIP_FOR_FM_PM_MHZ else 0) for f in freqs
+            ) if TEST_PM_NOISE in self.active_tests else 0,
         }
 
         self._log("─" * 50)
@@ -183,6 +185,7 @@ class MeasurementEngine:
         init_started = False
         failed = False
         point_idx = 0
+
         try:
             if self._stopped():
                 raise _StopRequested('Остановка запрошена до инициализации')
@@ -229,29 +232,12 @@ class MeasurementEngine:
 
                     row = self._measure_freq(freq_mhz)
                     self.results[TEST_FREQ].append(row)
-
-                    if row.status == 'error':
-                        if self._stopped():
-                            self.termination_reason = row.comment
-                            self.final_status = 'stopped'
-                            break
-                        failed = True
-                        self.final_status = 'error'
-                        self.termination_reason = row.comment
-                        self._diagnose(row.comment)
+                    stop_result = self._handle_row_status(row, 'частоты')
+                    if stop_result == 'break':
                         break
-
-                    if row.status == 'fail':
-                        # Оператор остановил при красном?
-                        if 'остановлено оператором' in (row.comment or ''):
-                            self.termination_reason = (
-                                'Остановлено оператором при провале частоты')
-                            self.final_status = 'error'
-                            break
-                        # Оператор продолжил — запоминаем, что провал был
-                        self._any_fail = True
-
-                    self._any_warn |= row.status in ('warn', 'fail')
+                    if stop_result == 'failed':
+                        failed = True
+                        break
 
                 if failed or self.final_status in ('stopped', 'error'):
                     break
@@ -277,43 +263,126 @@ class MeasurementEngine:
 
                         row = self._measure_level(freq_mhz, lv)
                         self.results[TEST_LEVEL].append(row)
-
-                        if row.status == 'error':
-                            if self._stopped():
-                                self.termination_reason = row.comment
-                                self.final_status = 'stopped'
-                                break
-                            failed = True
-                            self.final_status = 'error'
-                            self.termination_reason = row.comment
-                            self._diagnose(row.comment)
+                        stop_result = self._handle_row_status(row, 'уровня')
+                        if stop_result == 'break':
                             break
-
-                        if row.status == 'fail':
-                            if 'остановлено оператором' in (row.comment or ''):
-                                self.termination_reason = (
-                                    'Остановлено оператором при провале уровня')
-                                self.final_status = 'error'
-                                break
-                            self._any_fail = True
-
-                        self._any_warn |= row.status in ('warn', 'fail')
+                        if stop_result == 'failed':
+                            failed = True
+                            break
 
                     if failed or self.final_status in ('stopped', 'error'):
                         break
 
-                # ---------- Нереализованные тесты ----------
-                for t in self.active_tests:
-                    if t in NOT_IMPLEMENTED:
-                        self._log(f"   (тест «{t}» пока в разработке — пропущен)")
+                # ---------- Тест АМ шума ----------
+                if TEST_AM_NOISE in self.active_tests:
+                    if self._stopped():
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                        break
+                    try:
+                        self.gen.set_power_dbm(NOISE_POWER_DBM)
+                    except Exception as e:
+                        self._diagnose(f"Ошибка установки POW 0 для АМ шума: {e}")
+                    point_idx += 1
+                    if progress_callback:
+                        try:
+                            progress_callback(point_idx, total_points,
+                                              f"Частота {freq_mhz} МГц — АМ шум")
+                        except InterruptedError:
+                            self.stop_event.set()
+                            self.termination_reason = 'Остановка запрошена'
+                            self.final_status = 'stopped'
+                            break
+
+                    noise_rows = self._measure_am_noise(freq_mhz)
+                    for nr in noise_rows:
+                        self.results[TEST_AM_NOISE].append(nr)
+                        stop_result = self._handle_row_status(nr, 'АМ шума')
+                        if stop_result == 'break':
+                            break
+                        if stop_result == 'failed':
+                            failed = True
+                            break
+
+                    if failed or self.final_status in ('stopped', 'error'):
+                        break
+
+                # ---------- Тест ЧМ шума ----------
+                if TEST_FM_NOISE in self.active_tests:
+                    if f_val not in SKIP_FOR_FM_PM_MHZ:
+                        if self._stopped():
+                            self.termination_reason = 'Остановка запрошена'
+                            self.final_status = 'stopped'
+                            break
+                        try:
+                            self.gen.set_power_dbm(NOISE_POWER_DBM)
+                        except Exception:
+                            pass
+                        point_idx += 1
+                        if progress_callback:
+                            try:
+                                progress_callback(point_idx, total_points,
+                                                  f"Частота {freq_mhz} МГц — ЧМ шум")
+                            except InterruptedError:
+                                self.stop_event.set()
+                                self.termination_reason = 'Остановка запрошена'
+                                self.final_status = 'stopped'
+                                break
+
+                        noise_rows = self._measure_fm_noise(freq_mhz)
+                        for nr in noise_rows:
+                            self.results[TEST_FM_NOISE].append(nr)
+                            stop_result = self._handle_row_status(nr, 'ЧМ шума')
+                            if stop_result == 'break':
+                                break
+                            if stop_result == 'failed':
+                                failed = True
+                                break
+
+                        if failed or self.final_status in ('stopped', 'error'):
+                            break
+
+                # ---------- Тест ФМ шума ----------
+                if TEST_PM_NOISE in self.active_tests:
+                    if f_val not in SKIP_FOR_FM_PM_MHZ:
+                        if self._stopped():
+                            self.termination_reason = 'Остановка запрошена'
+                            self.final_status = 'stopped'
+                            break
+                        try:
+                            self.gen.set_power_dbm(NOISE_POWER_DBM)
+                        except Exception:
+                            pass
+                        point_idx += 1
+                        if progress_callback:
+                            try:
+                                progress_callback(point_idx, total_points,
+                                                  f"Частота {freq_mhz} МГц — ФМ шум")
+                            except InterruptedError:
+                                self.stop_event.set()
+                                self.termination_reason = 'Остановка запрошена'
+                                self.final_status = 'stopped'
+                                break
+
+                        noise_rows = self._measure_pm_noise(freq_mhz)
+                        for nr in noise_rows:
+                            self.results[TEST_PM_NOISE].append(nr)
+                            stop_result = self._handle_row_status(nr, 'ФМ шума')
+                            if stop_result == 'break':
+                                break
+                            if stop_result == 'failed':
+                                failed = True
+                                break
+
+                        if failed or self.final_status in ('stopped', 'error'):
+                            break
 
             else:
-                # Цикл прошёл до конца без break
+                # Цикл завершён без break
                 if self._stopped():
                     self.final_status = 'stopped'
                     self.termination_reason = 'Остановка запрошена'
                 elif self._any_fail:
-                    # Был провал, но оператор продолжил → итог всё равно КРАСНЫЙ
                     self.final_status = 'error'
                     self.termination_reason = (
                         'Провалы в точках; прогон продолжен оператором')
@@ -343,18 +412,66 @@ class MeasurementEngine:
         return self.results, self.final_status
 
     # --------------------------------------------------------
+    #        ОБРАБОТКА СТАТУСА ОДНОЙ СТРОКИ
+    # --------------------------------------------------------
+
+    def _handle_row_status(self, row, label):
+        """
+        Обрабатывает статус одной строки (frequency / level / noise).
+        Возвращает: 'ok' (продолжаем), 'break' (стоп), 'failed' (техническая ошибка).
+        """
+        if row.status == 'error':
+            if self._stopped():
+                self.termination_reason = row.comment
+                self.final_status = 'stopped'
+                return 'break'
+            self.final_status = 'error'
+            self.termination_reason = row.comment
+            self._diagnose(row.comment)
+            return 'failed'
+
+        if row.status == 'fail':
+            if 'остановлено оператором' in (row.comment or ''):
+                self.termination_reason = (
+                    f'Остановлено оператором при провале {label}')
+                self.final_status = 'error'
+                return 'break'
+            self._any_fail = True
+
+        self._any_warn |= row.status in ('warn', 'fail')
+        return 'ok'
+
+    # --------------------------------------------------------
     #                    ИЗМЕРЕНИЯ
     # --------------------------------------------------------
 
-    def _measure_freq(self, freq_mhz) -> FrequencyResult:
+    def _measure_freq(self, freq_mhz):
         return measure_frequency(
             self.gen, self.sk3, self.stop_event, self._log, freq_mhz,
             confirm_callback=self.confirm_callback,
         )
 
-    def _measure_level(self, freq_mhz, level_dbm) -> LevelResult:
+    def _measure_level(self, freq_mhz, level_dbm):
         return measure_level(
             self.gen, self.sk3, self.stop_event, self._log, freq_mhz, level_dbm,
+            confirm_callback=self.confirm_callback,
+        )
+
+    def _measure_am_noise(self, freq_mhz):
+        return measure_am_noise(
+            self.gen, self.sk3, self.stop_event, self._log, freq_mhz,
+            confirm_callback=self.confirm_callback,
+        )
+
+    def _measure_fm_noise(self, freq_mhz):
+        return measure_fm_noise(
+            self.gen, self.sk3, self.stop_event, self._log, freq_mhz,
+            confirm_callback=self.confirm_callback,
+        )
+
+    def _measure_pm_noise(self, freq_mhz):
+        return measure_pm_noise(
+            self.gen, self.sk3, self.stop_event, self._log, freq_mhz,
             confirm_callback=self.confirm_callback,
         )
 
