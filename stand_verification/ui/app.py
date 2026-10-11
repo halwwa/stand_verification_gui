@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Стенд автоматизированной поверки радиоприборов.
-Версия 2.2 — добавлены тесты АМ/ЧМ/ФМ шумов.
+Версия 2.3 — добавлен тест 6 (Переход АМ↔ЧМ).
 """
 
 import os
@@ -15,6 +15,7 @@ from stand_verification.measurement.engine import (
     MeasurementEngine,
     TEST_FREQ, TEST_LEVEL,
     TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
+    TEST_AM_FM_TRANSITION,
 )
 from stand_verification.ui.device_card import DeviceCard
 from stand_verification.config import DEVICE_DEFAULTS, REPORT_PATH_DEFAULT
@@ -31,12 +32,9 @@ TEST_NAMES = [
     ("Тест 3: АМ шум",                                          TEST_AM_NOISE),
     ("Тест 4: ЧМ шум",                                          TEST_FM_NOISE),
     ("Тест 5: ФМ шум",                                          TEST_PM_NOISE),
+    ("Тест 6: Переход АМ-ЧМ, ЧМ-АМ",                            TEST_AM_FM_TRANSITION),
 ]
 
-
-# ============================================================
-#                    ГЛАВНОЕ ПРИЛОЖЕНИЕ
-# ============================================================
 
 class StandApp:
     def __init__(self, root):
@@ -100,10 +98,6 @@ class StandApp:
         self.root.protocol('WM_DELETE_WINDOW', self.on_close)
         self.root.after(50, self._drain_callbacks)
 
-    # ===================================================
-    #                ГЛАВНАЯ ВКЛАДКА
-    # ===================================================
-
     def _build_main_tab(self):
         info = ttk.LabelFrame(self.tab_main, text="Тестируемый прибор", padding=8)
         info.pack(fill="x", padx=4, pady=(4, 8))
@@ -142,7 +136,7 @@ class StandApp:
 
         columns = ("check", "name", "status")
         self.tests_tree = ttk.Treeview(tests, columns=columns, show="headings",
-                                       height=6, selectmode="none")
+                                       height=7, selectmode="none")
         self.tests_tree.heading("check", text="✓")
         self.tests_tree.heading("name", text="Тест")
         self.tests_tree.heading("status", text="Статус")
@@ -253,14 +247,11 @@ class StandApp:
         if self.device_info_user_edited:
             self.log("Данные прибора получены, но поля уже правлены вручную — пропускаем.")
             return
-
         model = parsed.get("model") or parsed.get("manufacturer") or "Unknown"
         serial = parsed.get("serial") or "unknown"
-
         self.dev_name_var.set(model)
         self.dev_sn_var.set(serial)
         self.update_report_name()
-
         self.log(f"Автозаполнение: название = «{model}», зав. № = «{serial}»")
 
     def on_browse_path(self):
@@ -327,10 +318,6 @@ class StandApp:
             t["checked"] = False
             values = self.tests_tree.item(t["id"], "values")
             self.tests_tree.item(t["id"], values=("☐", values[1], values[2]))
-
-    # ===================================================
-    #        ЗАПУСК ТЕСТОВ
-    # ===================================================
 
     def on_run_selected(self):
         sel = [t for t in self.test_items if t["checked"]]
@@ -407,15 +394,10 @@ class StandApp:
         )
         self.engine_thread.start()
 
-    # ===================================================
-    #        ДИАЛОГ ПРИ ПРОВАЛЕ
-    # ===================================================
-
     def _confirm_fail_sync(self, freq_mhz, level_dbm, error_value,
                            tolerance_value, stage):
         if self.close_requested or self.stop_event.is_set():
             return True
-
         result_holder = {'decision': True}
         done_event = threading.Event()
 
@@ -447,6 +429,11 @@ class StandApp:
                     body = (f"Частота: {freq_mhz:g} МГц\n"
                             f"СКЗ шум: {error_value:.3f} рад\n"
                             f"Допуск: ±{tolerance_value:.3f} рад")
+                elif stage == 'am_fm_transition':
+                    title = 'Провал допуска — Переход АМ↔ЧМ'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"Коэффициент: {error_value}\n"
+                            f"Допуск: {tolerance_value}")
                 else:
                     title = 'Провал допуска'
                     body = (f"Частота: {freq_mhz:g} МГц\n"
@@ -475,10 +462,6 @@ class StandApp:
         self.callbacks.put(show_dialog)
         done_event.wait(timeout=600)
         return result_holder['decision']
-
-    # ===================================================
-    #        ФОНОВЫЙ ПОТОК ДВИЖКА
-    # ===================================================
 
     def _engine_worker(self, sk3_inst, gen_inst, active_ids,
                        selected_items, not_impl_names, report_target):
@@ -550,14 +533,9 @@ class StandApp:
             tag, label = evaluate_test(summary.get(tid, {}))
             self._set_test_status(t, tag, label)
 
-    # ===================================================
-    #        СОХРАНЕНИЕ В EXCEL
-    # ===================================================
-
     def _save_report_to_excel(self, engine, report_target):
         folder, fname = report_target
         folder = folder.replace("\\", "/")
-
         try:
             os.makedirs(folder, exist_ok=True)
         except Exception as e:
@@ -565,9 +543,7 @@ class StandApp:
             self.callbacks.put(lambda err=err_text, folder=folder: self.log(
                 f"⚠ Не удалось создать папку {folder}: {err}. Сохраняю рядом со скриптом."))
             folder = "."
-
         full_path = os.path.join(folder, fname)
-
         try:
             if not export_excel(engine.snapshot(), full_path, engine._log):
                 raise RuntimeError('Экспорт не подтвердил запись отчёта')
@@ -585,10 +561,6 @@ class StandApp:
                 self.callbacks.put(lambda err=err_text: self.log(
                     f"❌ Не удалось сохранить отчёт: {err}"))
                 return None, f'{e}; резервный путь: {e2}'
-
-    # ===================================================
-    #        ВСПОМОГАТЕЛЬНЫЕ
-    # ===================================================
 
     def on_emergency_stop(self):
         if not self.tests_running:
@@ -713,12 +685,10 @@ class StandApp:
                 (self.retry_thread and self.retry_thread.is_alive())):
             return
         self.sys_status_var.set('Повторная отправка OUTP OFF…')
-
         def worker():
             success, error = self.engine._deinit_generator()
             self.report_result = self._save_report_to_excel(self.engine, self.report_target)
             self.callbacks.put(lambda: self._on_retry_finished(success, error))
-
         self.retry_thread = threading.Thread(target=worker)
         self.retry_thread.start()
         self._set_controls_locked(True)
@@ -748,10 +718,6 @@ class StandApp:
         self.tests_tree.item(test["id"], values=(values[0], values[1], label))
         test["status"] = tag
 
-
-# ============================================================
-#                    ТОЧКА ВХОДА
-# ============================================================
 
 def main():
     root = tk.Tk()
