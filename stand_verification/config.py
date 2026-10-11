@@ -26,9 +26,38 @@ TEST_LEVEL = 'level'
 TEST_AM_NOISE = 'am_noise'
 TEST_FM_NOISE = 'fm_noise'
 TEST_PM_NOISE = 'pm_noise'
+TEST_AM_FM_TRANSITION = 'am_fm_transition'
 
 # Тесты, которые пока НЕ реализованы
 NOT_IMPLEMENTED = set()  # все три шума реализуем сейчас
+
+# ============================================================
+#         КОНСТАНТЫ ДЛЯ ТЕСТА 6 — ПЕРЕХОД АМ↔ЧМ
+# ============================================================
+
+# --- Переход АМ → ЧМ ---
+TR_AM_FM_FREQ_MHZ = 20.0            # частота несущей, МГц
+TR_AM_FM_POWER_DBM = -7.0           # уровень генератора, dBm
+TR_AM_FM_MOD_FREQ_HZ = 20000        # частота модуляции, Гц
+TR_AM_FM_DEPTH_PERCENT = 30.0       # глубина АМ, %
+TR_AM_FM_HF_KHZ = 0.3               # ФВЧ СК3-50, кГц
+TR_AM_FM_LF_KHZ = 20.0              # ФНЧ СК3-50, кГц
+TR_AM_FM_TOLERANCE_HZ = 10.0        # допуск в Гц
+
+# --- Переход ЧМ → АМ ---
+TR_FM_AM_FREQ_MHZ = 100.0
+TR_FM_AM_POWER_DBM = 0.0
+TR_FM_AM_MOD_FREQ_HZ = 20000
+TR_FM_AM_DEVIATION_HZ = 200000      # девиация 200 кГц
+TR_FM_AM_HF_KHZ = 0.3
+TR_FM_AM_LF_KHZ = 20.0
+TR_FM_AM_TOLERANCE_PERCENT = 0.02   # допуск в %
+
+# Задержка после настройки фильтров (сек)
+TR_SETTLE_DELAY = 15.0
+
+# Задержка на шаги генератора (сек)
+TR_STEP_DELAY = 1.0
 
 # Списки полос для АМ шума
 # Для большинства частот: сначала 0.3–3.4, потом 0.02–{3.4, 20, 60, 200}

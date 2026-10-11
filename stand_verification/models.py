@@ -26,19 +26,35 @@ class LevelResult:
 
 @dataclass(frozen=True)
 class NoiseResult:
+    frequency_mhz: float
+    band_low_khz: float
+    band_high_khz: float
+    noise_value: Optional[float]
+    tolerance: Optional[float]
+    unit: str
+    status: str
+    comment: str
+
+
+@dataclass(frozen=True)
+class TransitionResult:
     """
-    Результат измерения шумов (АМ / ЧМ / ФМ).
-    Единица зависит от режима:
-      - AM → шум в % (проценты)
-      - FM → шум в Гц (герцы)
-      - PM → шум в рад (радианы)
+    Результат измерения перехода АМ↔ЧМ (Тест 6).
+      direction: 'AM→FM' или 'FM→AM'
+      value_plus:  +значение (пик+)
+      value_minus: -значение (пик−)
+      coefficient: вычисленный коэффициент перехода
+      tolerance: допуск
+      unit: 'Гц' или '%'
+      status: 'ok' | 'warn' | 'fail' | 'error'
+      comment: emoji / текст
     """
-    frequency_mhz: float              # частота несущей, МГц
-    band_low_khz: float               # нижняя граница полосы фильтра, кГц
-    band_high_khz: float              # верхняя граница полосы фильтра, кГц
-    noise_value: Optional[float]      # измеренное СКЗ шума
-    tolerance: Optional[float]        # допуск в тех же единицах
-    unit: str                         # '%' | 'Гц' | 'рад'
+    direction: str
+    value_plus: Optional[float]
+    value_minus: Optional[float]
+    coefficient: Optional[float]
+    tolerance: Optional[float]
+    unit: str
     status: str
     comment: str
 
@@ -46,7 +62,8 @@ class NoiseResult:
 @dataclass(frozen=True)
 class RunSnapshot:
     active_tests: tuple
-    results: Dict[str, List[Union[FrequencyResult, LevelResult, NoiseResult]]]
+    results: Dict[str, List[Union[FrequencyResult, LevelResult,
+                                  NoiseResult, TransitionResult]]]
     final_status: str
     termination_reason: str
     shutdown_success: object
