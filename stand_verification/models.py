@@ -38,23 +38,39 @@ class NoiseResult:
 
 @dataclass(frozen=True)
 class TransitionResult:
-    """
-    Результат измерения перехода АМ↔ЧМ (Тест 6).
-      direction: 'AM→FM' или 'FM→AM'
-      value_plus:  +значение (пик+)
-      value_minus: -значение (пик−)
-      coefficient: вычисленный коэффициент перехода
-      tolerance: допуск
-      unit: 'Гц' или '%'
-      status: 'ok' | 'warn' | 'fail' | 'error'
-      comment: emoji / текст
-    """
     direction: str
     value_plus: Optional[float]
     value_minus: Optional[float]
     coefficient: Optional[float]
     tolerance: Optional[float]
     unit: str
+    status: str
+    comment: str
+
+@dataclass(frozen=True)
+class ThdAmResult:
+    mod_freq_hz: float
+    set_depth: float
+    meas_depth: Optional[float]
+    thd_sk3: Optional[float]
+    thd_sk6: Optional[float]
+    tolerance: Optional[float]
+    mod_freq_c6: str
+    band_str: str
+    status: str
+    comment: str
+
+
+@dataclass(frozen=True)
+class  ThdFmResult:
+    mod_freq_hz: float
+    set_deviation_hz: float
+    meas_deviation_hz: Optional[float]
+    thd_sk3: Optional[float]
+    thd_c6: Optional[float]
+    tolerance: Optional[float]
+    mod_freq_c6: str
+    band_str: str
     status: str
     comment: str
 

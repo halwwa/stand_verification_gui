@@ -2,9 +2,9 @@
 """
 Единый движок измерений.
 
-Два режима:
-  1) run() — цикл по частотам (тесты 1–5: частота, уровень, шумы АМ/ЧМ/ФМ).
-  2) run_am_fm_transition() — отдельный прогон (тест 6).
+Режимы:
+  1) Цикл по частотам — тесты 1–5 (частота, уровень, шумы АМ/ЧМ/ФМ).
+  2) После цикла — Тест 6 (переход АМ↔ЧМ), Тест 7 (КГ АМ), Тест 8 (КГ ЧМ).
 """
 
 import threading
@@ -13,7 +13,7 @@ from copy import deepcopy
 from stand_verification.config import (
     F_LIST, U_LIST_0, U_LIST, INITIAL_POWER_DBM, NOISE_POWER_DBM,
     TEST_FREQ, TEST_LEVEL, TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
-    TEST_AM_FM_TRANSITION,
+    TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM,
     NOT_IMPLEMENTED, SKIP_FOR_FM_PM_MHZ,
 )
 from stand_verification.measurement.frequency import measure_frequency
@@ -22,24 +22,36 @@ from stand_verification.measurement.am_noise import measure_am_noise
 from stand_verification.measurement.fm_noise import measure_fm_noise
 from stand_verification.measurement.pm_noise import measure_pm_noise
 from stand_verification.measurement.am_fm_transition import run_transition
+from stand_verification.measurement.thd_am import run_thd_am
+from stand_verification.measurement.thd_fm import run_thd_fm
 from stand_verification.models import (
-    FrequencyResult, LevelResult, NoiseResult, TransitionResult,
+    FrequencyResult, LevelResult, NoiseResult,
+    TransitionResult, ThdAmResult, ThdFmResult,
 )
 from stand_verification.devices.smb100a import SMB100A
 from stand_verification.devices.sk3_50 import SK350
+from stand_verification.devices.c6_22 import C622
 
 
 class _StopRequested(Exception):
-    """Завершить запуск через общий finally до формирования результата."""
+    """Завершить запуск через общий finally."""
 
 
 class MeasurementEngine:
-    """Единый движок."""
+    """Единый движок измерений."""
 
-    def __init__(self, gen, sk3, active_tests=None, log_callback=None,
-                 stop_event=None, confirm_callback=None):
+    def __init__(self, gen, sk3, c6=None, active_tests=None,
+                 log_callback=None, stop_event=None, confirm_callback=None):
+        """
+        :param c6: сессия С6-22 или None (если прибор не подключён).
+        """
         self.gen = gen if isinstance(gen, SMB100A) else SMB100A(gen)
         self.sk3 = sk3 if isinstance(sk3, SK350) else SK350(sk3)
+        if c6 is None:
+            self.c6 = None
+        else:
+            self.c6 = c6 if isinstance(c6, C622) else C622(c6)
+
         self.log = log_callback if log_callback is not None else (lambda msg: None)
         self.stop_event = stop_event if stop_event is not None else threading.Event()
         self.confirm_callback = confirm_callback
@@ -55,6 +67,8 @@ class MeasurementEngine:
             TEST_FM_NOISE: [],
             TEST_PM_NOISE: [],
             TEST_AM_FM_TRANSITION: [],
+            TEST_THD_AM: [],
+            TEST_THD_FM: [],
         }
 
         self.final_status = 'not_started'
@@ -107,6 +121,36 @@ class MeasurementEngine:
             self._diagnose(f"Ошибка OUTP OFF: {e}")
             return False, str(e)
 
+    # ---------- инициализация С6-22 ----------
+
+    def _init_c6_if_needed(self):
+        """
+        Если С6-22 подключён и выбран хотя бы один тест, использующий его —
+        привести С6-22 в исходное состояние (VM, MAN, 100V).
+        """
+        needs_c6 = (TEST_THD_AM in self.active_tests or
+                    TEST_THD_FM in self.active_tests)
+        if not needs_c6:
+            return
+        if self.c6 is None:
+            self._log("⚠ С6-22 не подключён — тесты 7 и 8 будут пропущены.")
+            return
+        try:
+            self._log("Инициализация С6-22: MODE VM, LIMitD MAN, RANgeD 100V…")
+            self.c6.init_voltage_mode()
+        except Exception as e:
+            self._diagnose(f"Ошибка инициализации С6-22: {e}")
+
+    def _restore_c6(self):
+        """Вернуть С6-22 в исходное состояние (VM, MAN, 100V)."""
+        if self.c6 is None:
+            return
+        try:
+            self.c6.init_voltage_mode()
+            self._log("С6-22 возвращён в режим VM/MAN/100V.")
+        except Exception as e:
+            self._diagnose(f"Ошибка возврата С6-22: {e}")
+
     # ---------- подсчёт точек ----------
 
     def _count_total_points(self, freqs):
@@ -126,9 +170,16 @@ class MeasurementEngine:
             if TEST_PM_NOISE in self.active_tests:
                 if f_val not in SKIP_FOR_FM_PM_MHZ:
                     total += 3
-        # Тест 6 — 2 фиксированные точки
+        # Тест 6 — 2 точки
         if TEST_AM_FM_TRANSITION in self.active_tests:
             total += 2
+        # Тест 7 — 8 точек
+        if TEST_THD_AM in self.active_tests:
+            total += 8
+        # Тест 8 — переменное число: для 16650/9810/6970 — 1 девиация,
+        #              для остальных — 3.
+        if TEST_THD_FM in self.active_tests:
+            total += 8  # грубо; точное число вычисляется ниже в planned
         return total
 
     # ========================================================
@@ -136,10 +187,6 @@ class MeasurementEngine:
     # ========================================================
 
     def run(self, freqs=None, progress_callback=None):
-        """
-        Цикл по частотам — тесты 1–5.
-        Если выбран Тест 6 — вызывается после цикла отдельно.
-        """
         if freqs is None:
             freqs = F_LIST
 
@@ -169,11 +216,13 @@ class MeasurementEngine:
                 (3 if float(f) not in SKIP_FOR_FM_PM_MHZ else 0) for f in freqs
             ) if TEST_PM_NOISE in self.active_tests else 0,
             TEST_AM_FM_TRANSITION: 2 if TEST_AM_FM_TRANSITION in self.active_tests else 0,
+            TEST_THD_AM: 8 if TEST_THD_AM in self.active_tests else 0,
+            TEST_THD_FM: (18 if TEST_THD_FM in self.active_tests else 0),  # 3 + 3 + 3 + 3 + 3 + 1 + 1 + 1 = 18
         }
 
         self._log("─" * 50)
         self._log(f"Активные тесты: {', '.join(self.active_tests)}")
-        self._log(f"Всего точек (по частотам + переход): {total_points}")
+        self._log(f"Всего точек: {total_points}")
 
         implemented = [t for t in self.active_tests if t not in NOT_IMPLEMENTED]
         if not implemented:
@@ -190,6 +239,8 @@ class MeasurementEngine:
                 raise _StopRequested('Остановка запрошена до инициализации')
             init_started = True
             self._init_generator()
+            # --- Инициализация С6-22 (если нужен) ---
+            self._init_c6_if_needed()
             if self._stopped():
                 raise _StopRequested('Остановка запрошена')
 
@@ -237,7 +288,6 @@ class MeasurementEngine:
                     if action == 'failed':
                         failed = True
                         break
-
                 if failed or self.final_status in ('stopped', 'error'):
                     break
 
@@ -303,85 +353,83 @@ class MeasurementEngine:
                         break
 
                 # --- ЧМ шум ---
-                if TEST_FM_NOISE in self.active_tests:
-                    if f_val not in SKIP_FOR_FM_PM_MHZ:
-                        if self._stopped():
-                            self.termination_reason = 'Остановка запрошена'
-                            self.final_status = 'stopped'
-                            break
-                        try:
-                            self.gen.set_power_dbm(NOISE_POWER_DBM)
-                        except Exception:
-                            pass
-                        point_idx += 1
-                        if progress_callback:
-                            try:
-                                progress_callback(point_idx, total_points,
-                                                  f"Частота {freq_mhz} МГц — ЧМ шум")
-                            except InterruptedError:
-                                self.stop_event.set()
-                                self.termination_reason = 'Остановка запрошена'
-                                self.final_status = 'stopped'
-                                break
-                        noise_rows = self._measure_fm_noise(freq_mhz)
-                        for nr in noise_rows:
-                            self.results[TEST_FM_NOISE].append(nr)
-                            action = self._handle_row_status(nr, 'ЧМ шума')
-                            if action == 'break':
-                                break
-                            if action == 'failed':
-                                failed = True
-                                break
-                        if failed or self.final_status in ('stopped', 'error'):
-                            break
-
-                # --- ФМ шум ---
-                if TEST_PM_NOISE in self.active_tests:
-                    if f_val not in SKIP_FOR_FM_PM_MHZ:
-                        if self._stopped():
-                            self.termination_reason = 'Остановка запрошена'
-                            self.final_status = 'stopped'
-                            break
-                        try:
-                            self.gen.set_power_dbm(NOISE_POWER_DBM)
-                        except Exception:
-                            pass
-                        point_idx += 1
-                        if progress_callback:
-                            try:
-                                progress_callback(point_idx, total_points,
-                                                  f"Частота {freq_mhz} МГц — ФМ шум")
-                            except InterruptedError:
-                                self.stop_event.set()
-                                self.termination_reason = 'Остановка запрошена'
-                                self.final_status = 'stopped'
-                                break
-                        noise_rows = self._measure_pm_noise(freq_mhz)
-                        for nr in noise_rows:
-                            self.results[TEST_PM_NOISE].append(nr)
-                            action = self._handle_row_status(nr, 'ФМ шума')
-                            if action == 'break':
-                                break
-                            if action == 'failed':
-                                failed = True
-                                break
-                        if failed or self.final_status in ('stopped', 'error'):
-                            break
-
-            # =================== ТЕСТ 6 (ОТДЕЛЬНО) ===================
-            if (not failed and self.final_status not in ('stopped', 'error')
-                    and TEST_AM_FM_TRANSITION in self.active_tests):
-                if not self._stopped():
+                if TEST_FM_NOISE in self.active_tests and f_val not in SKIP_FOR_FM_PM_MHZ:
+                    if self._stopped():
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                        break
+                    try:
+                        self.gen.set_power_dbm(NOISE_POWER_DBM)
+                    except Exception:
+                        pass
                     point_idx += 1
                     if progress_callback:
                         try:
                             progress_callback(point_idx, total_points,
-                                              "Тест 6 — Переход АМ↔ЧМ")
+                                              f"Частота {freq_mhz} МГц — ЧМ шум")
                         except InterruptedError:
                             self.stop_event.set()
                             self.termination_reason = 'Остановка запрошена'
                             self.final_status = 'stopped'
+                            break
+                    noise_rows = self._measure_fm_noise(freq_mhz)
+                    for nr in noise_rows:
+                        self.results[TEST_FM_NOISE].append(nr)
+                        action = self._handle_row_status(nr, 'ЧМ шума')
+                        if action == 'break':
+                            break
+                        if action == 'failed':
+                            failed = True
+                            break
+                    if failed or self.final_status in ('stopped', 'error'):
+                        break
 
+                # --- ФМ шум ---
+                if TEST_PM_NOISE in self.active_tests and f_val not in SKIP_FOR_FM_PM_MHZ:
+                    if self._stopped():
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                        break
+                    try:
+                        self.gen.set_power_dbm(NOISE_POWER_DBM)
+                    except Exception:
+                        pass
+                    point_idx += 1
+                    if progress_callback:
+                        try:
+                            progress_callback(point_idx, total_points,
+                                              f"Частота {freq_mhz} МГц — ФМ шум")
+                        except InterruptedError:
+                            self.stop_event.set()
+                            self.termination_reason = 'Остановка запрошена'
+                            self.final_status = 'stopped'
+                            break
+                    noise_rows = self._measure_pm_noise(freq_mhz)
+                    for nr in noise_rows:
+                        self.results[TEST_PM_NOISE].append(nr)
+                        action = self._handle_row_status(nr, 'ФМ шума')
+                        if action == 'break':
+                            break
+                        if action == 'failed':
+                            failed = True
+                            break
+                    if failed or self.final_status in ('stopped', 'error'):
+                        break
+
+            # =================== ТЕСТ 6 ===================
+            if (not failed and self.final_status not in ('stopped', 'error')
+                    and TEST_AM_FM_TRANSITION in self.active_tests
+                    and not self._stopped()):
+                point_idx += 1
+                if progress_callback:
+                    try:
+                        progress_callback(point_idx, total_points,
+                                          "Тест 6 — Переход АМ↔ЧМ")
+                    except InterruptedError:
+                        self.stop_event.set()
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                if not self._stopped():
                     trans_rows = run_transition(
                         self.gen, self.sk3, self.stop_event, self._log,
                         confirm_callback=self.confirm_callback,
@@ -395,8 +443,65 @@ class MeasurementEngine:
                             failed = True
                             break
 
+            # =================== ТЕСТ 7 ===================
+            if (not failed and self.final_status not in ('stopped', 'error')
+                    and TEST_THD_AM in self.active_tests
+                    and not self._stopped()):
+                point_idx += 1
+                if progress_callback:
+                    try:
+                        progress_callback(point_idx, total_points, "Тест 7 — КГ АМ")
+                    except InterruptedError:
+                        self.stop_event.set()
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                if not self._stopped():
+                    thd_rows = run_thd_am(
+                        self.gen, self.sk3, self.c6,
+                        self.stop_event, self._log,
+                        confirm_callback=self.confirm_callback,
+                    )
+                    for tr in thd_rows:
+                        self.results[TEST_THD_AM].append(tr)
+                        action = self._handle_row_status(tr, 'КГ АМ')
+                        if action == 'break':
+                            break
+                        if action == 'failed':
+                            failed = True
+                            break
+                # Возврат С6-22 в исходное состояние
+                self._restore_c6()
+
+            # =================== ТЕСТ 8 ===================
+            if (not failed and self.final_status not in ('stopped', 'error')
+                    and TEST_THD_FM in self.active_tests
+                    and not self._stopped()):
+                point_idx += 1
+                if progress_callback:
+                    try:
+                        progress_callback(point_idx, total_points, "Тест 8 — КГ ЧМ")
+                    except InterruptedError:
+                        self.stop_event.set()
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                if not self._stopped():
+                    thd_rows = run_thd_fm(
+                        self.gen, self.sk3, self.c6,
+                        self.stop_event, self._log,
+                        confirm_callback=self.confirm_callback,
+                    )
+                    for tr in thd_rows:
+                        self.results[TEST_THD_FM].append(tr)
+                        action = self._handle_row_status(tr, 'КГ ЧМ')
+                        if action == 'break':
+                            break
+                        if action == 'failed':
+                            failed = True
+                            break
+                self._restore_c6()
+
             # =================== ФИНАЛИЗАЦИЯ ===================
-            if (not failed and self.final_status not in ('stopped', 'error')):
+            if not failed and self.final_status not in ('stopped', 'error'):
                 if self._stopped():
                     self.final_status = 'stopped'
                     self.termination_reason = 'Остановка запрошена'
