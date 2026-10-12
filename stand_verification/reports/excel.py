@@ -4,10 +4,6 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 
 
-# ============================================================
-#                    ПЕРЕВОД СТАТУСОВ
-# ============================================================
-
 STATUS_LABELS = {
     'ok':    'Пройден',
     'warn':  'Внимание',
@@ -60,6 +56,18 @@ def export_excel(snapshot, filepath, log_callback=None):
             ['Направление', 'Значение +', 'Значение −',
              'Коэффициент', 'Допуск', 'Ед.', 'Статус'],
         ),
+        'thd_am': (
+            'КГ АМ',
+            ['Fm, Гц', 'Заданный Кам, %', 'Измеренный Кам, %',
+             'КГ СК3-50, %', 'КГ С6-22, %', 'Допуск, %',
+             'Изм. Частота С6-22', 'Фильтр, кГц', 'Статус'],
+        ),
+        'thd_fm': (
+            'КГ ЧМ',
+            ['Fm, Гц', 'Заданная девиация, Гц', 'Измеренная девиация, Гц',
+             'КГ СК3-50, %', 'КГ С6-22, %', 'Допуск, %',
+             'Изм. Частота С6-22', 'Фильтр, кГц', 'Статус'],
+        ),
     }
 
     # Удаляем существующие листы, которые будем пересоздавать
@@ -98,13 +106,31 @@ def export_excel(snapshot, filepath, log_callback=None):
                     STATUS_LABELS.get(row.status, row.status),
                 ]
                 status_col = 5
-            else:  # am_fm_transition
+            elif key == 'am_fm_transition':
                 values = [
                     row.direction, row.value_plus, row.value_minus,
                     row.coefficient, row.tolerance, row.unit,
                     STATUS_LABELS.get(row.status, row.status),
                 ]
                 status_col = 7
+            elif key == 'thd_am':
+                values = [
+                    row.mod_freq_hz, row.set_depth, row.meas_depth,
+                    row.thd_sk3, row.thd_c6, row.tolerance,
+                    row.mod_freq_c6, row.band_str,
+                    STATUS_LABELS.get(row.status, row.status),
+                ]
+                status_col = 9
+            elif key == 'thd_fm':
+                values = [
+                    row.mod_freq_hz, row.set_deviation_hz, row.meas_deviation_hz,
+                    row.thd_sk3, row.thd_c6, row.tolerance,
+                    row.mod_freq_c6, row.band_str,
+                    STATUS_LABELS.get(row.status, row.status),
+                ]
+                status_col = 9
+            else:
+                continue
 
             ws.append(values)
 

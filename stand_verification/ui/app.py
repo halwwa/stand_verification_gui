@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Стенд автоматизированной поверки радиоприборов.
-Версия 2.3 — добавлен тест 6 (Переход АМ↔ЧМ).
+Версия 2.4 — добавлены Тесты 7 (КГ АМ) и 8 (КГ ЧМ).
 """
 
 import os
@@ -15,7 +15,7 @@ from stand_verification.measurement.engine import (
     MeasurementEngine,
     TEST_FREQ, TEST_LEVEL,
     TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
-    TEST_AM_FM_TRANSITION,
+    TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM,
 )
 from stand_verification.ui.device_card import DeviceCard
 from stand_verification.config import DEVICE_DEFAULTS, REPORT_PATH_DEFAULT
@@ -33,6 +33,8 @@ TEST_NAMES = [
     ("Тест 4: ЧМ шум",                                          TEST_FM_NOISE),
     ("Тест 5: ФМ шум",                                          TEST_PM_NOISE),
     ("Тест 6: Переход АМ-ЧМ, ЧМ-АМ",                            TEST_AM_FM_TRANSITION),
+    ("Тест 7: КГ АМ",                                           TEST_THD_AM),
+    ("Тест 8: КГ ЧМ",                                           TEST_THD_FM),
 ]
 
 
@@ -40,8 +42,8 @@ class StandApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Стенд автоматизированной поверки радиоприборов")
-        self.root.geometry("1150x900")
-        self.root.minsize(1000, 750)
+        self.root.geometry("1150x920")
+        self.root.minsize(1000, 780)
 
         self.stop_event = threading.Event()
         self.engine_thread = None
@@ -136,7 +138,7 @@ class StandApp:
 
         columns = ("check", "name", "status")
         self.tests_tree = ttk.Treeview(tests, columns=columns, show="headings",
-                                       height=7, selectmode="none")
+                                       height=8, selectmode="none")
         self.tests_tree.heading("check", text="✓")
         self.tests_tree.heading("name", text="Тест")
         self.tests_tree.heading("status", text="Статус")
@@ -228,9 +230,7 @@ class StandApp:
                   text="Здесь будут таблица теста частоты и график теста уровня.\n"
                        "(появятся после реализации — в следующей версии)",
                   font=("Segoe UI", 11, "italic"),
-                  foreground="#666",
-                  justify="center")\
-            .pack(expand=True)
+                  foreground="#666", justify="center").pack(expand=True)
 
     def log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -355,6 +355,7 @@ class StandApp:
 
         card_sk3 = self.cards[0]
         card_gen = self.cards[2]
+        card_c6 = self.cards[1]
         if not card_sk3.is_connected():
             messagebox.showerror("Не подключён СК3-50",
                                  "Сначала подключите СК3-50 (первая карточка).")
@@ -363,6 +364,8 @@ class StandApp:
             messagebox.showerror("Не подключён SMB100A",
                                  "Сначала подключите SMB100A (третья карточка).")
             return
+        # С6-22 — опционально. Если выбран тест 7/8, но С6-22 не подключён —
+        # он будет пропущен с пометкой в логе.
 
         if all(t["status"] == "done" for t in selected_items):
             self._reset_statuses_silent()
@@ -389,8 +392,9 @@ class StandApp:
 
         self.engine_thread = threading.Thread(
             target=self._engine_worker,
-            args=(card_sk3.inst, card_gen.inst, active_ids,
-                  selected_items, not_impl_names, report_target),
+            args=(card_sk3.inst, card_gen.inst,
+                  card_c6.inst if card_c6.is_connected() else None,
+                  active_ids, selected_items, not_impl_names, report_target),
         )
         self.engine_thread.start()
 
@@ -434,6 +438,16 @@ class StandApp:
                     body = (f"Частота: {freq_mhz:g} МГц\n"
                             f"Коэффициент: {error_value}\n"
                             f"Допуск: {tolerance_value}")
+                elif stage == 'thd_am':
+                    title = 'Провал допуска — КГ АМ'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"КГ (С6-22): {error_value:.3f} %\n"
+                            f"Допуск: ±{tolerance_value:.3f} %")
+                elif stage == 'thd_fm':
+                    title = 'Провал допуска — КГ ЧМ'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"ΔКГ: {error_value:.3f} %\n"
+                            f"Допуск: ±{tolerance_value:.3f} %")
                 else:
                     title = 'Провал допуска'
                     body = (f"Частота: {freq_mhz:g} МГц\n"
@@ -463,10 +477,10 @@ class StandApp:
         done_event.wait(timeout=600)
         return result_holder['decision']
 
-    def _engine_worker(self, sk3_inst, gen_inst, active_ids,
-                       selected_items, not_impl_names, report_target):
+    def _engine_worker(self, sk3_inst, gen_inst, c6_inst,
+                       active_ids, selected_items, not_impl_names, report_target):
         engine = MeasurementEngine(
-            gen=gen_inst, sk3=sk3_inst, active_tests=active_ids,
+            gen=gen_inst, sk3=sk3_inst, c6=c6_inst, active_tests=active_ids,
             stop_event=self.stop_event,
             confirm_callback=self._confirm_fail_sync,
             log_callback=lambda msg: self.callbacks.put(lambda: self.log(msg)),
