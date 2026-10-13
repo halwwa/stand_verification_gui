@@ -53,7 +53,7 @@ class ThdAmResult:
     set_depth: float
     meas_depth: Optional[float]
     thd_sk3: Optional[float]
-    thd_sk6: Optional[float]
+    thd_c6: Optional[float]
     tolerance: Optional[float]
     mod_freq_c6: str
     band_str: str
