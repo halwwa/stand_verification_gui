@@ -15,7 +15,8 @@
          * MEASure:THD? С6-22 → КГ_C6;
          * MEASure:FREQuency? С6-22 → частота модуляции;
          * THD? СК3-50 → КГ_СК3;
-         * допуск = 0.1 × thd_c6 + 0.03.
+         * допуск = 0.1 % для 20/1000/6000 Гц, 0.2 % для 20000/60000 Гц;
+           для остальных частот = 0.1 × |thd_c6| + 0.03.
   5. По завершении: CONF:THD OFF.
 """
 
@@ -39,10 +40,14 @@ from stand_verification.measurement.tolerances import evaluate, require_finite
 _THD_FM_SQU_FREQS = {16650, 9810, 6970}
 
 
-def _thd_fm_tolerance(thd_c6):
-    """Допуск из скрипта: 0.1 × КГ_С6 + 0.03."""
+def _thd_fm_tolerance(fm_hz, thd_c6):
+    """Допуск (%) по частоте модуляции; для меандра сохранена формула."""
     if thd_c6 is None:
         return None
+    if fm_hz in (20, 1000, 6000):
+        return 0.1
+    if fm_hz in (20000, 60000):
+        return 0.2
     return 0.1 * abs(thd_c6) + 0.03
 
 
@@ -188,8 +193,8 @@ def run_thd_fm(gen, sk3, c6, stop_event, log, confirm_callback=None):
                 except Exception as e:
                     log(f"   ❌ Ошибка THD с СК3-50: {e}")
 
-                # --- Допуск: 0.1 × КГ_С6 + 0.03 ---
-                tolerance = _thd_fm_tolerance(thd_c6)
+                # --- Допуск по частоте модуляции ---
+                tolerance = _thd_fm_tolerance(fm_hz, thd_c6)
 
                 # --- Оценка: сравниваем КГ_C6 - КГ_СК3 с допуском ---
                 if thd_c6 is None or thd_sk3 is None:
