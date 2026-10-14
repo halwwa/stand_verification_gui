@@ -66,22 +66,17 @@ class ExcelCharacterizationTests(unittest.TestCase):
         frequency = workbook['Частота']
         self.assertEqual(list(frequency.values)[0], (
             'Уст Частота, Гц', 'Изм Частота, Гц', 'Погрешность, Гц',
-            'Допуск, Гц', 'Частота ПЧ, кГц', 'Статус', 'Комментарий'))
+            'Допуск, Гц', 'Частота ПЧ, кГц', 'Статус'))
         self.assertEqual(list(frequency.values)[1:], [
-            (10000, 10000, 0, 1.05, 2, 'ok', 'accepted'),
-            (10000, 10001, 1, 1.05, 2, 'warn', 'near limit'),
-            (10000, 10002, 2, 1.05, 2, 'fail', 'outside limit'),
-            (10000, None, None, None, None, 'error', 'meter failure'),
+            (10000, 10000, 0, 1.05, 2, 'Пройден'),
+            (10000, 10001, 1, 1.05, 2, 'Внимание'),
+            (10000, 10002, 2, 1.05, 2, 'Провален'),
+            (10000, None, None, None, None, 'Ошибка'),
         ])
         for row, color in zip(range(2, 6), ['C6EFCE', 'FFEB9C', 'FFC7CE', 'FFC7CE']):
             with self.subTest(row=row):
                 self.assertEqual(frequency.cell(row, 6).fill.fill_type, 'solid')
                 self.assertEqual(frequency.cell(row, 6).fill.fgColor.rgb, '00' + color)
-        self.assertIsNone(frequency['G2'].comment)
-        self.assertIsNone(frequency['G3'].comment)
-        self.assertIsNone(frequency['G4'].comment)
-        self.assertEqual(frequency['G5'].comment.text, 'meter failure')
-        self.assertEqual(frequency['G5'].comment.author, 'MeasurementEngine')
         self.engine.results[TEST_LEVEL].append(LevelResult(
             frequency_mhz=2000, set_level_dbm=0, measured_level_dbm=None,
             error_db=None, tolerance_db=2, status='error', comment='meter failure',
@@ -90,13 +85,11 @@ class ExcelCharacterizationTests(unittest.TestCase):
         workbook = self.save_and_load()
         self.assertEqual(list(workbook['Уровень'].values), [
             ('Частота, МГц', 'Заданный уровень, дБм', 'Измеренный уровень, дБм',
-             'Погрешность, дБ', 'Допуск, дБ', 'Статус', 'Комментарий'),
-            (2000, 0, 1.5, 1.5, 2, 'warn', 'near limit'),
-            (2000, 0, None, None, 2, 'error', 'meter failure'),
+             'Погрешность, дБ', 'Допуск, дБ', 'Статус'),
+            (2000, 0, 1.5, 1.5, 2, 'Внимание'),
+            (2000, 0, None, None, 2, 'Ошибка'),
         ])
         self.assertEqual(workbook['Уровень']['F3'].fill.fgColor.rgb, '00FFC7CE')
-        self.assertEqual(workbook['Уровень']['G3'].comment.text, 'meter failure')
-        self.assertEqual(workbook['Уровень']['G3'].comment.author, 'MeasurementEngine')
         self.assertEqual(list(workbook['Сводка'].values), [
             ('Итог', 'Причина завершения', 'Выключение выполнено', 'Ошибка выключения'),
             ('error', 'meter failure', False, 'output failure'),

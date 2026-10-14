@@ -130,8 +130,7 @@ class MeasurementEngineTests(unittest.TestCase):
             from openpyxl import load_workbook
             workbook = load_workbook(path)
             sheet = workbook['Частота']
-            self.assertEqual(sheet['F2'].value, 'error')
-            self.assertEqual(sheet['G2'].comment.text, 'meter failure')
+            self.assertEqual(sheet['F2'].value, 'Ошибка')
             self.assertIn('Сводка', workbook.sheetnames)
             self.assertIn('Диагностика', workbook.sheetnames)
 

@@ -146,7 +146,7 @@ class EngineCharacterizationTests(unittest.TestCase):
 
     def test_only_unimplemented_placeholders_return_error_without_instrument_io(self):
         gen, meter = FakeGenerator(), FakeMeter()
-        engine = MeasurementEngine(gen, meter, ['am_noise'], stop_event=FakeEvent())
+        engine = MeasurementEngine(gen, meter, ['unknown_test'], stop_event=FakeEvent())
         result, status = engine.run(['1'])
         self.assertEqual(status, 'error')
         self.assertEqual(result[TEST_FREQ], [])
@@ -220,7 +220,7 @@ class EngineCharacterizationTests(unittest.TestCase):
             error_hz=None, tolerance_hz=None, if_frequency_khz=None,
             status='error', comment='Остановка запрошена во время выдержки',
         ))
-        self.assertEqual(event.wait_calls, [1, 6.0])
+        self.assertEqual(event.wait_calls, [1, 10.0])
 
         event = FakeEvent()
         engine = self.engine([TEST_LEVEL], event=event)

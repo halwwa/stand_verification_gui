@@ -40,7 +40,7 @@ class _StopRequested(Exception):
 class MeasurementEngine:
     """Единый движок измерений."""
 
-    def __init__(self, gen, sk3, c6=None, active_tests=None,
+    def __init__(self, gen, sk3, active_tests=None, c6=None,
                  log_callback=None, stop_event=None, confirm_callback=None):
         """
         :param c6: сессия С6-22 или None (если прибор не подключён).
@@ -224,7 +224,8 @@ class MeasurementEngine:
         self._log(f"Активные тесты: {', '.join(self.active_tests)}")
         self._log(f"Всего точек: {total_points}")
 
-        implemented = [t for t in self.active_tests if t not in NOT_IMPLEMENTED]
+        implemented = [t for t in self.active_tests
+                       if t in self.results and t not in NOT_IMPLEMENTED]
         if not implemented:
             self._diagnose("Не выбрано ни одного реализованного теста.")
             self.final_status = 'error'
@@ -505,13 +506,12 @@ class MeasurementEngine:
                 if self._stopped():
                     self.final_status = 'stopped'
                     self.termination_reason = 'Остановка запрошена'
-                elif self._any_fail:
-                    self.final_status = 'error'
-                    self.termination_reason = (
-                        'Провалы в точках; прогон продолжен оператором')
                 elif self._any_warn:
                     self.final_status = 'warn'
-                    self.termination_reason = 'Все запланированные измерения завершены'
+                    self.termination_reason = (
+                        'Измерения завершены; есть точки за пределами допуска'
+                        if self._any_fail else
+                        'Все запланированные измерения завершены')
                 else:
                     self.final_status = 'done'
                     self.termination_reason = 'Все запланированные измерения завершены'
@@ -604,7 +604,7 @@ class MeasurementEngine:
             warn = sum(1 for r in rows if r.status == 'warn')
             fail = sum(1 for r in rows if r.status == 'fail')
             error = sum(1 for r in rows if r.status == 'error')
-            complete = total == planned and error == 0
+            complete = total == planned and error == 0 and fail == 0
             status = ('error' if error else
                       'not_started' if total == 0 else
                       'incomplete' if not complete else
