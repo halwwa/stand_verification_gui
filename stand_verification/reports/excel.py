@@ -139,7 +139,6 @@ def export_excel(snapshot, filepath, log_callback=None):
                 fill = PatternFill(start_color=color, end_color=color,
                                    fill_type='solid')
                 ws.cell(ws.max_row, status_col).fill = fill
-
     # --- Служебные листы ---
     for name in ('Сводка', 'Тесты', 'Диагностика'):
         if name in wb.sheetnames:

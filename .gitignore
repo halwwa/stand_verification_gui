@@ -18,6 +18,7 @@ env/
 .idea/
 *.swp
 *.swo
+.kilo/
 
 # Операционная система
 .DS_Store
