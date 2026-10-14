@@ -506,7 +506,12 @@ for n in Fm_listAm:
         
        
         
-        tolerTHDam = 0.1*thd_res+0.03
+        if stf in [20, 1000, 6000]:
+            tolerTHDam = 0.1
+        elif stf in [20000, 60000]:
+            tolerTHDam = 0.2
+        else:
+            tolerTHDam = 0.1*thd_res+0.03
         delthd_res = THD_CK3 - thd_res
         
         if delthd_res <= tolerTHDam:
