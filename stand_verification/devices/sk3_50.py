@@ -4,9 +4,7 @@ class SK350:
     def __init__(self, session):
         self.session = session
 
-    # --------------------------------------------------------
-    #                    ЧАСТОТА / УРОВЕНЬ
-    # --------------------------------------------------------
+    # ---------- частота / уровень ----------
 
     def _read_float(self, command):
         self.session.write(command)
@@ -28,9 +26,7 @@ class SK350:
     def read_power_dbm(self):
         return self._read_float(b'POW?\n')
 
-    # --------------------------------------------------------
-    #                    РЕЖИМЫ МОДУЛЯЦИИ
-    # --------------------------------------------------------
+    # ---------- режимы модуляции ----------
 
     def set_mode_am(self):
         self.session.write(b'CONF:MODE AM\n')
@@ -44,9 +40,7 @@ class SK350:
         self.session.write(b'CONF:MODE PM\n')
         self.session.flush()
 
-    # --------------------------------------------------------
-    #                    ФИЛЬТРЫ ФВЧ / ФНЧ
-    # --------------------------------------------------------
+    # ---------- фильтры ----------
 
     def set_filter_hp_khz(self, value_khz):
         cmd = f'CONF:INP:FILT:HPAS {value_khz:g}kHz\n'
@@ -63,9 +57,7 @@ class SK350:
         self.session.write(cmd.encode('utf-8'))
         self.session.flush()
 
-    # --------------------------------------------------------
-    #                    СКЗ / ПИК / КГ
-    # --------------------------------------------------------
+    # ---------- СКЗ / пик / КГ ----------
 
     def read_rms(self):
         self.session.write(b'RMS?\n')
@@ -82,7 +74,6 @@ class SK350:
         self.session.flush()
 
     def read_peak(self):
-        """PEAK? — пиковое значение (зависит от установленной полярности)."""
         self.session.write(b'PEAK?\n')
         self.session.flush()
         raw = self.session.readline()
@@ -97,7 +88,6 @@ class SK350:
         self.session.flush()
 
     def read_thd(self):
-        """THD? — коэффициент гармоник с СК3-50."""
         self.session.write(b'THD?\n')
         self.session.flush()
         raw = self.session.readline()
@@ -118,3 +108,44 @@ class SK350:
     def set_amt_off(self):
         self.session.write(b'CONF:AMT OFF\n')
         self.session.flush()
+
+    # ---------- Калибровка и шкалы (для Тестов 9, 10) ----------
+
+    def set_range_fm_auto(self):
+        """CONF:RANG:FM AUTO — автоматический выбор шкалы девиации."""
+        self.session.write(b'CONF:RANG:FM AUTO\n')
+        self.session.flush()
+
+    def set_range_fm_hz(self, value_hz):
+        """CONF:RANG:FM <value> — ручная шкала девиации (например 1000000)."""
+        cmd = f'CONF:RANG:FM {int(value_hz)}\n'
+        self.session.write(cmd.encode('utf-8'))
+        self.session.flush()
+
+    def cal_current(self, timeout_s=20.0, attempts=3, attempt_wait_s=2.0):
+        """
+        CAL:CURR? — запуск калибровки. Ждёт ответ '0' (успех).
+
+        Возвращает True при успехе, False при неудаче.
+
+        Логика:
+          1. Отправить CAL:CURR?.
+          2. Подождать timeout_s секунд (у приборов долгая калибровка).
+          3. До attempts раз прочитать ответ. Если '0' — успех.
+        """
+        import time as _time
+        self.session.write(b'CAL:CURR?\n')
+        self.session.flush()
+
+        _time.sleep(timeout_s)
+
+        for _ in range(attempts):
+            _time.sleep(attempt_wait_s)
+            try:
+                raw = self.session.readline()
+                response = raw.decode('ascii', errors='ignore').strip()
+                if response == '0':
+                    return True
+            except Exception:
+                pass
+        return False
