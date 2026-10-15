@@ -47,6 +47,7 @@ class TransitionResult:
     status: str
     comment: str
 
+
 @dataclass(frozen=True)
 class ThdAmResult:
     mod_freq_hz: float
@@ -62,7 +63,7 @@ class ThdAmResult:
 
 
 @dataclass(frozen=True)
-class  ThdFmResult:
+class ThdFmResult:
     mod_freq_hz: float
     set_deviation_hz: float
     meas_deviation_hz: Optional[float]
@@ -76,10 +77,37 @@ class  ThdFmResult:
 
 
 @dataclass(frozen=True)
+class DeviationResult:
+    """
+    Результат Теста 10 (погрешность измерения пиковых значений девиации ЧМ).
+    Все значения — в кГц (как в скрипте папы, где числа делятся на 1000).
+      mod_freq_khz:        Fm в кГц
+      set_deviation_khz:   заданная девиация
+      peak_plus_khz:       измеренная девиация +
+      peak_minus_khz:      измеренная девиация −
+      delta_plus_khz:      погрешность +
+      delta_minus_khz:     погрешность −
+      tolerance_khz:       допуск
+      band_str:            полоса фильтра (например '0.02-20')
+    """
+    mod_freq_khz: float
+    set_deviation_khz: float
+    peak_plus_khz: Optional[float]
+    peak_minus_khz: Optional[float]
+    delta_plus_khz: Optional[float]
+    delta_minus_khz: Optional[float]
+    tolerance_khz: Optional[float]
+    band_str: str
+    status: str
+    comment: str
+
+
+@dataclass(frozen=True)
 class RunSnapshot:
     active_tests: tuple
-    results: Dict[str, List[Union[FrequencyResult, LevelResult,
-                                  NoiseResult, TransitionResult]]]
+    results: Dict[str, List[Union[
+        FrequencyResult, LevelResult, NoiseResult,
+        TransitionResult, ThdAmResult, ThdFmResult, DeviationResult]]]
     final_status: str
     termination_reason: str
     shutdown_success: object

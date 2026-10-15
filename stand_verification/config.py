@@ -21,6 +21,7 @@ TEST_PM_NOISE = 'pm_noise'
 TEST_AM_FM_TRANSITION = 'am_fm_transition'
 TEST_THD_AM = 'thd_am'
 TEST_THD_FM = 'thd_fm'
+TEST_FM_DEVIATION = 'fm_deviation'          # Тест 10
 
 NOT_IMPLEMENTED = set()
 
@@ -70,12 +71,9 @@ THD_AM_POWER_DBM = 0.0
 THD_AM_START_MOD_FREQ_HZ = 1000
 THD_AM_START_DEPTH = 10
 
-# Частоты модуляции при измерении КГ АМ
 THD_AM_FM_LIST_HZ = [20, 90, 6000, 60000]
-# Глубины АМ
 THD_AM_KAM_LIST = [30, 95]
 
-# Полосы фильтров СК3-50 в зависимости от модулирующей частоты
 THD_AM_FILTER_MAP = {
     20:     3.4,
     90:     3.4,
@@ -83,16 +81,14 @@ THD_AM_FILTER_MAP = {
     60000:  200.0,
 }
 
-# Задержки
 THD_AM_WAIT_AFTER_FREQ_MAN_S = 5.0
 THD_AM_WAIT_AFTER_SET_DEPTH_S = 2.0
 THD_AM_WAIT_BEFORE_PEAK_S = 10.0
 THD_AM_WAIT_AFTER_PEAK_S = 1.0
-THD_AM_WAIT_BEFORE_C6_THD_S = 20.0   # «С6-22 очень долго настраивается»
+THD_AM_WAIT_BEFORE_C6_THD_S = 20.0
 THD_AM_WAIT_AFTER_C6_CMD_S = 2.0
 THD_AM_WAIT_BEFORE_SK3_THD_S = 1.0
 
-# Допуски (%) для Теста 7 (по папиному коду)
 THD_AM_TOL_DEFAULT = 0.3
 THD_AM_TOL_20_90_KAM30 = 0.15
 THD_AM_TOL_6000_KAM30 = 0.2
@@ -109,7 +105,6 @@ THD_FM_FM_LIST_HZ = [20, 1000, 6000, 20000, 60000, 16650, 9810, 6970]
 THD_FM_DEV_LIST_HZ_STD = [300000, 500000, 1000000]
 THD_FM_DEV_LIST_HZ_SQU = [500000]
 
-# Фильтры по Fm для Теста 8
 THD_FM_FILTER_MAP = {
     20:     3.4,
     1000:   3.4,
@@ -128,6 +123,72 @@ THD_FM_WAIT_AFTER_PEAK_S = 1.0
 THD_FM_WAIT_BEFORE_C6_THD_S = 20.0
 THD_FM_WAIT_AFTER_C6_CMD_S = 2.0
 THD_FM_WAIT_BEFORE_SK3_THD_S = 2.0
+
+# ---- Тест 10: Погрешность измерения пиковых значений девиации (ЧМ) ----
+
+# Генератор
+DEV_CARRIER_MHZ = 20.0
+DEV_POWER_DBM = 0.0
+DEV_START_MOD_FREQ_HZ = 1000
+DEV_START_DEVIATION_HZ = 100000
+
+# Список модулирующих частот (Гц)
+DEV_FM_LIST_HZ = [20, 60, 90, 1000, 20000, 30000, 60000]
+
+# Список девиаций для каждой Fm
+DEV_DEVIATION_MAP_HZ = {
+    20:     [1000000, 500000, 100000],
+    60:     [1000000, 500000, 100000],
+    90:     [1000000, 500000, 100000],
+    1000:   [1000000, 500000, 100000, 30000, 5000, 1000, 100],
+    20000:  [1000000, 500000, 100000],
+    30000:  [1000000, 500000, 100000],
+    60000:  [1000000, 500000, 100000, 30000, 5000, 1000],
+}
+
+# Полоса фильтра СК3-50 по Fm
+DEV_FILTER_MAP_KHZ = {
+    20:     20.0,
+    60:     20.0,
+    90:     20.0,
+    1000:   20.0,
+    20000:  60.0,
+    30000:  60.0,
+    60000:  200.0,
+}
+
+# delnoise по Fm (Гц)
+DEV_DELNOISE_MAP_HZ = {
+    20:     2.8,
+    60:     2.8,
+    90:     2.8,
+    1000:   2.8,
+    20000:  12.0,
+    30000:  12.0,
+    60000:  44.0,
+}
+
+# Коэффициент AN по Fm
+DEV_AN_MAP = {
+    20:     0.03,
+    60:     0.03,
+    90:     0.01,
+    1000:   0.01,
+    20000:  0.01,
+    30000:  0.01,
+    60000:  0.01,
+}
+
+# Задержки для Теста 10
+DEV_WAIT_AFTER_SET_FREQ_S = 1.0
+DEV_WAIT_AFTER_SET_DEV_S = 2.0
+DEV_WAIT_BEFORE_PEAK_S = 10.0
+DEV_WAIT_AFTER_PEAK_POS_S = 1.0
+DEV_WAIT_BEFORE_PEAK_NEG_S = 5.0
+DEV_WAIT_AFTER_PEAK_NEG_S = 1.0
+DEV_CALIBRATION_WAIT_S = 20.0
+DEV_CALIBRATION_ATTEMPTS = 3
+DEV_CALIBRATION_ATTEMPT_WAIT_S = 2.0
 
 # ---- Дефолты для приборов ----
 
