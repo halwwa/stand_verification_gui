@@ -68,9 +68,14 @@ def export_excel(snapshot, filepath, log_callback=None):
              'КГ СК3-50, %', 'КГ С6-22, %', 'Допуск, %',
              'Изм. Частота С6-22', 'Фильтр, кГц', 'Статус'],
         ),
+        'fm_deviation': (
+            'ЧМ',
+            ['Fm, кГц', 'Дев част, кГц', '+F, кГц', '-F, кГц',
+             '+dF, кГц', '-dF, кГц', 'Допуск, кГц',
+             'Фильтр, кГц', 'Статус'],
+        ),
     }
 
-    # Удаляем существующие листы, которые будем пересоздавать
     for name, _ in layouts.values():
         if name in wb.sheetnames:
             del wb[name]
@@ -129,6 +134,15 @@ def export_excel(snapshot, filepath, log_callback=None):
                     STATUS_LABELS.get(row.status, row.status),
                 ]
                 status_col = 9
+            elif key == 'fm_deviation':
+                values = [
+                    row.mod_freq_khz, row.set_deviation_khz,
+                    row.peak_plus_khz, row.peak_minus_khz,
+                    row.delta_plus_khz, row.delta_minus_khz,
+                    row.tolerance_khz, row.band_str,
+                    STATUS_LABELS.get(row.status, row.status),
+                ]
+                status_col = 9
             else:
                 continue
 
@@ -139,6 +153,7 @@ def export_excel(snapshot, filepath, log_callback=None):
                 fill = PatternFill(start_color=color, end_color=color,
                                    fill_type='solid')
                 ws.cell(ws.max_row, status_col).fill = fill
+
     # --- Служебные листы ---
     for name in ('Сводка', 'Тесты', 'Диагностика'):
         if name in wb.sheetnames:

@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Стенд автоматизированной поверки радиоприборов.
-Версия 2.4 — добавлены Тесты 7 (КГ АМ) и 8 (КГ ЧМ).
+Версия 2.5 — добавлен Тест 10 (погрешность девиации ЧМ).
 """
 
 import os
-import logging
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
 import threading
 import queue
 from datetime import datetime
@@ -19,15 +16,12 @@ from stand_verification.measurement.engine import (
     TEST_FREQ, TEST_LEVEL,
     TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
     TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM,
+    TEST_FM_DEVIATION,
 )
 from stand_verification.ui.device_card import DeviceCard
 from stand_verification.config import DEVICE_DEFAULTS, REPORT_PATH_DEFAULT
 from stand_verification.reports.excel import export_excel
 
-
-# ============================================================
-#                    НАЗВАНИЯ ТЕСТОВ (для GUI)
-# ============================================================
 
 TEST_NAMES = [
     ("Тест 1: Погрешность измерения частоты входного сигнала", TEST_FREQ),
@@ -38,40 +32,13 @@ TEST_NAMES = [
     ("Тест 6: Переход АМ-ЧМ, ЧМ-АМ",                            TEST_AM_FM_TRANSITION),
     ("Тест 7: КГ АМ",                                           TEST_THD_AM),
     ("Тест 8: КГ ЧМ",                                           TEST_THD_FM),
+    ("Тест 10: Погрешность измерения пиковых значений девиации", TEST_FM_DEVIATION),
 ]
-
-
-def _configure_file_logging():
-    """Write persistent application logs outside the install directory."""
-    if os.name == "nt":
-        base_dir = Path(os.environ.get("LOCALAPPDATA", Path.home()))
-    elif os.sys.platform == "darwin":
-        base_dir = Path.home() / "Library" / "Logs"
-    else:
-        base_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-
-    log_path = base_dir / "StandVerification" / "app.log"
-    try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        handler = RotatingFileHandler(
-            log_path, maxBytes=2_000_000, backupCount=3, encoding="utf-8",
-        )
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
-        ))
-        app_logger = logging.getLogger("stand_verification")
-        app_logger.setLevel(logging.INFO)
-        app_logger.addHandler(handler)
-        app_logger.propagate = False
-        return app_logger, str(log_path), None
-    except OSError as exc:
-        return None, str(log_path), str(exc)
 
 
 class StandApp:
     def __init__(self, root):
         self.root = root
-        self.file_logger, self.log_path, self.logging_error = _configure_file_logging()
         self.root.title("Стенд автоматизированной поверки радиоприборов")
         self.root.geometry("1150x920")
         self.root.minsize(1000, 780)
@@ -127,12 +94,7 @@ class StandApp:
             .pack(fill="x", side="bottom")
 
         self.log("Приложение запущено.")
-        if self.logging_error:
-            self.log(f"Не удалось создать файл журнала {self.log_path}: {self.logging_error}")
-        else:
-            self.log(f"Файл журнала: {self.log_path}")
         self.log("Подключите СК3-50 — данные тестируемого прибора подтянутся автоматически.")
-        self.root.report_callback_exception = self._log_callback_exception
         self.root.protocol('WM_DELETE_WINDOW', self.on_close)
         self.root.after(50, self._drain_callbacks)
 
@@ -174,7 +136,7 @@ class StandApp:
 
         columns = ("check", "name", "status")
         self.tests_tree = ttk.Treeview(tests, columns=columns, show="headings",
-                                       height=8, selectmode="none")
+                                       height=9, selectmode="none")
         self.tests_tree.heading("check", text="✓")
         self.tests_tree.heading("name", text="Тест")
         self.tests_tree.heading("status", text="Статус")
@@ -211,11 +173,8 @@ class StandApp:
                                              values=("☑", name, "—"),
                                              tags=("idle",))
             self.test_items.append({
-                "id": item_id,
-                "name": name,
-                "test_id": test_id,
-                "checked": True,
-                "status": "idle",
+                "id": item_id, "name": name, "test_id": test_id,
+                "checked": True, "status": "idle",
             })
 
         self.tests_tree.bind("<Button-1>", self._on_tree_click)
@@ -271,20 +230,10 @@ class StandApp:
     def log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {msg}\n"
-        if self.file_logger:
-            self.file_logger.info("%s", msg)
         self.log_text.configure(state="normal")
         self.log_text.insert("end", line)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
-
-    def _log_callback_exception(self, exc_type, exc_value, exc_traceback):
-        if self.file_logger:
-            self.file_logger.error(
-                "Unhandled Tkinter callback exception",
-                exc_info=(exc_type, exc_value, exc_traceback),
-            )
-        self.log(f"Необработанная ошибка интерфейса: {exc_value}")
 
     def _mark_user_edited(self, event=None):
         self.device_info_user_edited = True
@@ -410,8 +359,6 @@ class StandApp:
             messagebox.showerror("Не подключён SMB100A",
                                  "Сначала подключите SMB100A (третья карточка).")
             return
-        # С6-22 — опционально. Если выбран тест 7/8, но С6-22 не подключён —
-        # он будет пропущен с пометкой в логе.
 
         if all(t["status"] == "done" for t in selected_items):
             self._reset_statuses_silent()
@@ -494,6 +441,11 @@ class StandApp:
                     body = (f"Частота: {freq_mhz:g} МГц\n"
                             f"ΔКГ: {error_value:.3f} %\n"
                             f"Допуск: ±{tolerance_value:.3f} %")
+                elif stage == 'fm_deviation':
+                    title = 'Провал допуска — девиация ЧМ'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"Максимальная погрешность: {error_value:.3f} кГц\n"
+                            f"Допуск: ±{tolerance_value:.3f} кГц")
                 else:
                     title = 'Провал допуска'
                     body = (f"Частота: {freq_mhz:g} МГц\n"
