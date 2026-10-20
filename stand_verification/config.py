@@ -21,6 +21,7 @@ TEST_PM_NOISE = 'pm_noise'
 TEST_AM_FM_TRANSITION = 'am_fm_transition'
 TEST_THD_AM = 'thd_am'
 TEST_THD_FM = 'thd_fm'
+TEST_FM_LINEARITY = 'fm_linearity' 
 TEST_FM_DEVIATION = 'fm_deviation'          # Тест 10
 
 NOT_IMPLEMENTED = set()
@@ -123,6 +124,38 @@ THD_FM_WAIT_AFTER_PEAK_S = 1.0
 THD_FM_WAIT_BEFORE_C6_THD_S = 20.0
 THD_FM_WAIT_AFTER_C6_CMD_S = 2.0
 THD_FM_WAIT_BEFORE_SK3_THD_S = 2.0
+
+# ---- Тест 9: Проверка линейности шкал ЧМ ----
+
+# Только для Fm = 1000 Гц, 20 МГц, 0 dBm
+LIN_CARRIER_MHZ = 20.0
+LIN_POWER_DBM = 0.0
+LIN_MOD_FREQ_HZ = 1000
+
+# 5 максимальных девиаций (шкал) × 2 коэффициента
+LIN_DEVIATION_SCALES_HZ = [1000000, 100000, 10000, 1000, 100]
+LIN_DIVISORS = [1, 10]
+
+# Коэффициент AN для Fm=1000
+LIN_AN = 0.01
+
+# delnoise для Fm=1000 (из Теста 10)
+LIN_DELNOISE_HZ = 2.8
+
+# Фильтр для Fm=1000
+LIN_FILTER_KHZ = 20.0
+
+# Задержки
+LIN_WAIT_AFTER_SET_FREQ_S = 1.0
+LIN_WAIT_AFTER_SET_DEV_S = 2.0
+LIN_WAIT_AFTER_SET_RANGE_S = 2.0
+LIN_WAIT_BEFORE_PEAK_S = 10.0
+LIN_WAIT_AFTER_PEAK_POS_S = 1.0
+LIN_WAIT_BEFORE_PEAK_NEG_S = 5.0
+LIN_WAIT_AFTER_PEAK_NEG_S = 1.0
+LIN_CALIBRATION_WAIT_S = 20.0
+LIN_CALIBRATION_ATTEMPTS = 3
+LIN_CALIBRATION_ATTEMPT_WAIT_S = 2.0
 
 # ---- Тест 10: Погрешность измерения пиковых значений девиации (ЧМ) ----
 

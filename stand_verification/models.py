@@ -101,13 +101,40 @@ class DeviationResult:
     status: str
     comment: str
 
+@dataclass(frozen=True)
+class LinearityResult:
+    """
+    Результат Теста 9 (проверка линейности шкал ЧМ).
+
+      scale_khz:         установленная шкала (CONF:RANG:FM), кГц
+      set_deviation_khz: заданная девиация, кГц
+      divisor:           k (1 или 10) — во сколько раз девиация меньше шкалы
+      peak_plus_khz:     измеренная девиация +
+      peak_minus_khz:    измеренная девиация −
+      delta_plus_khz:    погрешность +
+      delta_minus_khz:   погрешность −
+      tolerance_khz:     допуск
+      status:            ok / warn / fail / error
+      comment:           emoji
+    """
+    scale_khz: float
+    set_deviation_khz: float
+    divisor: int
+    peak_plus_khz: Optional[float]
+    peak_minus_khz: Optional[float]
+    delta_plus_khz: Optional[float]
+    delta_minus_khz: Optional[float]
+    tolerance_khz: Optional[float]
+    status: str
+    comment: str
 
 @dataclass(frozen=True)
 class RunSnapshot:
     active_tests: tuple
     results: Dict[str, List[Union[
         FrequencyResult, LevelResult, NoiseResult,
-        TransitionResult, ThdAmResult, ThdFmResult, DeviationResult]]]
+        TransitionResult, ThdAmResult, ThdFmResult,
+        DeviationResult, LinearityResult]]]
     final_status: str
     termination_reason: str
     shutdown_success: object
