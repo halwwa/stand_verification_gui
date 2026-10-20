@@ -157,12 +157,38 @@ class KamResult:
     comment: str
 
 @dataclass(frozen=True)
+class PmResult:
+    """
+    Результат Теста 12 (погрешность пиковых значений индекса ФМ).
+      mod_freq_hz:        частота модуляции, Гц
+      set_index:          заданный индекс (Dpm_k)
+      peak_plus_rad:      +P, рад
+      peak_minus_rad:     −P, рад
+      delta_plus_rad:     погрешность +, рад
+      delta_minus_rad:    погрешность −, рад
+      tolerance_rad:      допуск, рад
+      band_str:           полоса фильтра
+      status:             ok / warn / fail / error
+      comment:            emoji
+    """
+    mod_freq_hz: float
+    set_index: float
+    peak_plus_rad: Optional[float]
+    peak_minus_rad: Optional[float]
+    delta_plus_rad: Optional[float]
+    delta_minus_rad: Optional[float]
+    tolerance_rad: Optional[float]
+    band_str: str
+    status: str
+    comment: str
+
+@dataclass(frozen=True)
 class RunSnapshot:
     active_tests: tuple
     results: Dict[str, List[Union[
         FrequencyResult, LevelResult, NoiseResult,
         TransitionResult, ThdAmResult, ThdFmResult,
-        DeviationResult, LinearityResult, KamResult]]]
+        DeviationResult, LinearityResult, KamResult, PmResult]]]
     final_status: str
     termination_reason: str
     shutdown_success: object
