@@ -129,12 +129,40 @@ class LinearityResult:
     comment: str
 
 @dataclass(frozen=True)
+class KamResult:
+    """
+    Результат Теста 11 (погрешность пиковых значений Кам, АМ).
+      carrier_mhz:       частота несущей, МГц
+      mod_freq_hz:       частота модуляции, Гц
+      set_depth_percent: заданная глубина Кам, %
+      peak_plus_percent: +Кам, %
+      peak_minus_percent: −Кам, %
+      delta_plus_percent: погрешность +, %
+      delta_minus_percent: погрешность −, %
+      tolerance_percent: допуск, %
+      band_str:          полоса фильтра
+      status:            ok / warn / fail / error
+      comment:           emoji
+    """
+    carrier_mhz: float
+    mod_freq_hz: float
+    set_depth_percent: float
+    peak_plus_percent: Optional[float]
+    peak_minus_percent: Optional[float]
+    delta_plus_percent: Optional[float]
+    delta_minus_percent: Optional[float]
+    tolerance_percent: Optional[float]
+    band_str: str
+    status: str
+    comment: str
+
+@dataclass(frozen=True)
 class RunSnapshot:
     active_tests: tuple
     results: Dict[str, List[Union[
         FrequencyResult, LevelResult, NoiseResult,
         TransitionResult, ThdAmResult, ThdFmResult,
-        DeviationResult, LinearityResult]]]
+        DeviationResult, LinearityResult, KamResult]]]
     final_status: str
     termination_reason: str
     shutdown_success: object

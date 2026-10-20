@@ -223,6 +223,76 @@ DEV_CALIBRATION_WAIT_S = 20.0
 DEV_CALIBRATION_ATTEMPTS = 3
 DEV_CALIBRATION_ATTEMPT_WAIT_S = 2.0
 
+# ---- Тест 11: Погрешность пиковых значений Кам (АМ) ----
+
+# ID теста
+TEST_AM_PEAKS = 'am_peaks'
+
+# Генератор: несущая 20 МГц, 0 dBm, АМ, 1 кГц, 30%
+AM_PEAKS_START_CARRIER_MHZ = 20.0
+AM_PEAKS_START_POWER_DBM = 0.0
+AM_PEAKS_START_MOD_FREQ_HZ = 1000
+AM_PEAKS_START_DEPTH_PERCENT = 30
+
+# Список несущих частот для Теста 11
+AM_PEAKS_CARRIER_LIST_MHZ = [20, 4, 1, 0.1]
+
+# Список модулирующих частот по несущей
+AM_PEAKS_MOD_FREQ_MAP_HZ = {
+    20:   [20, 60, 1000, 30000, 60000],
+    4:    [1000],
+    1:    [20, 60, 1000, 6000],
+    0.1:  [400],
+}
+
+# Список Кам: для Fm=1000 на несущих != 4 — 6 значений, иначе [95]
+AM_PEAKS_KAM_LIST_FULL = [100, 95, 50, 10, 3, 1]
+AM_PEAKS_KAM_LIST_DEFAULT = [95]
+
+# Фильтры СК3-50 по Fm
+AM_PEAKS_FILTER_MAP_KHZ = {
+    20:    20.0,
+    60:    20.0,
+    1000:  20.0,
+    6000:  20.0,
+    20000: 60.0,
+    30000: 60.0,
+    400:   1.5,
+    60000: 200.0,
+}
+
+# Коэффициент Bn по Fm
+AM_PEAKS_BN_MAP = {
+    20:   0.03,
+    60:   0.03,
+}
+# По умолчанию — 0.01 для остальных Fm
+
+# delnoise по Fm (в %)
+AM_PEAKS_DELNOISE_MAP_PERCENT = {
+    20:    0.03,
+    60:    0.03,
+    1000:  0.03,
+    6000:  0.03,
+    20000: 0.03,
+    30000: 0.03,
+    400:   0.01,
+    60000: 0.03,
+}
+
+# Задержки
+AM_PEAKS_WAIT_AFTER_SET_CARRIER_S = 10.0
+AM_PEAKS_WAIT_AFTER_SET_MOD_FREQ_S = 1.0
+AM_PEAKS_WAIT_AFTER_SET_DEPTH_S = 3.0
+AM_PEAKS_WAIT_BEFORE_PEAK_S = 10.0
+AM_PEAKS_WAIT_AFTER_PEAK_POS_S = 1.0
+AM_PEAKS_WAIT_BEFORE_PEAK_NEG_S = 5.0
+AM_PEAKS_WAIT_AFTER_PEAK_NEG_S = 1.0
+AM_PEAKS_CALIBRATION_WAIT_S = 20.0
+AM_PEAKS_CALIBRATION_ATTEMPTS = 3
+AM_PEAKS_CALIBRATION_ATTEMPT_WAIT_S = 2.0
+
+
 # ---- Дефолты для приборов ----
 
 DEVICE_DEFAULTS = (
