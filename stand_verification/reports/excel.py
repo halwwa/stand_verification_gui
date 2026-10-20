@@ -68,6 +68,12 @@ def export_excel(snapshot, filepath, log_callback=None):
              'КГ СК3-50, %', 'КГ С6-22, %', 'Допуск, %',
              'Изм. Частота С6-22', 'Фильтр, кГц', 'Статус'],
         ),
+        'am_peaks': (
+            'АМ',
+            ['F несущая, МГц', 'Fm, Гц', 'Кам заданный, %',
+             '+Кам, %', '-Кам, %', '+dКам, %', '-dКам, %',
+             'Допуск, %', 'Фильтр, кГц', 'Статус'],
+        ),
         'fm_linearity': (
             'ЧМ_лин',
             ['Шкала, кГц', 'Дев част, кГц', 'Делитель',
@@ -140,6 +146,17 @@ def export_excel(snapshot, filepath, log_callback=None):
                     STATUS_LABELS.get(row.status, row.status),
                 ]
                 status_col = 9
+
+            elif key == 'am_peaks':
+                values = [
+                    row.carrier_mhz, row.mod_freq_hz, row.set_depth_percent,
+                    row.peak_plus_percent, row.peak_minus_percent,
+                    row.delta_plus_percent, row.delta_minus_percent,
+                    row.tolerance_percent, row.band_str,
+                    STATUS_LABELS.get(row.status, row.status),
+                ]
+                status_col = 10
+        
             elif key == 'fm_linearity':
                 values = [
                     row.scale_khz, row.set_deviation_khz, row.divisor,
