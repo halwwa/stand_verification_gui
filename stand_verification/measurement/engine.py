@@ -13,7 +13,7 @@ from copy import deepcopy
 from stand_verification.config import (
     F_LIST, U_LIST_0, U_LIST, INITIAL_POWER_DBM, NOISE_POWER_DBM,
     TEST_FREQ, TEST_LEVEL, TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
-    TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM, TEST_FM_DEVIATION,
+    TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM, TEST_FM_LINEARITY, TEST_FM_DEVIATION,
     NOT_IMPLEMENTED, SKIP_FOR_FM_PM_MHZ,
 )
 from stand_verification.measurement.frequency import measure_frequency
@@ -24,10 +24,11 @@ from stand_verification.measurement.pm_noise import measure_pm_noise
 from stand_verification.measurement.am_fm_transition import run_transition
 from stand_verification.measurement.thd_am import run_thd_am
 from stand_verification.measurement.thd_fm import run_thd_fm
+from stand_verification.measurement.fm_linearity import run_fm_linearity
 from stand_verification.measurement.fm_deviation import run_fm_deviation
 from stand_verification.models import (
     FrequencyResult, LevelResult, NoiseResult,
-    TransitionResult, ThdAmResult, ThdFmResult, DeviationResult,
+    TransitionResult, ThdAmResult, ThdFmResult, LinearityResult, DeviationResult,
 )
 from stand_verification.devices.smb100a import SMB100A
 from stand_verification.devices.sk3_50 import SK350
@@ -67,6 +68,7 @@ class MeasurementEngine:
             TEST_AM_FM_TRANSITION: [],
             TEST_THD_AM: [],
             TEST_THD_FM: [],
+            TEST_FM_LINEARITY: [],
             TEST_FM_DEVIATION: [],
         }
 
@@ -164,6 +166,8 @@ class MeasurementEngine:
             total += 8
         if TEST_THD_FM in self.active_tests:
             total += 18
+        if TEST_FM_LINEARITY in self.active_tests:
+            total += 10
         if TEST_FM_DEVIATION in self.active_tests:
             total += 28   # 5×3 + 7 + 6 = 15 + 7 + 6 = 28
         return total
@@ -204,6 +208,7 @@ class MeasurementEngine:
             TEST_AM_FM_TRANSITION: 2 if TEST_AM_FM_TRANSITION in self.active_tests else 0,
             TEST_THD_AM: 8 if TEST_THD_AM in self.active_tests else 0,
             TEST_THD_FM: 18 if TEST_THD_FM in self.active_tests else 0,
+            TEST_FM_LINEARITY: 10 if TEST_FM_LINEARITY in self.active_tests else 0,
             TEST_FM_DEVIATION: 28 if TEST_FM_DEVIATION in self.active_tests else 0,
         }
 
@@ -479,6 +484,40 @@ class MeasurementEngine:
                             failed = True
                             break
                 self._restore_c6()
+
+                        # =================== ТЕСТ 9 ===================
+            if (not failed and self.final_status not in ('stopped', 'error')
+                    and TEST_FM_LINEARITY in self.active_tests
+                    and not self._stopped()):
+                point_idx += 1
+                if progress_callback:
+                    try:
+                        progress_callback(point_idx, total_points,
+                                          "Тест 9 — Линейность шкал ЧМ")
+                    except InterruptedError:
+                        self.stop_event.set()
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                if not self._stopped():
+                    try:
+                        lin_rows = run_fm_linearity(
+                            self.gen, self.sk3,
+                            self.stop_event, self._log,
+                            confirm_callback=self.confirm_callback,
+                        )
+                        for lr in lin_rows:
+                            self.results[TEST_FM_LINEARITY].append(lr)
+                            action = self._handle_row_status(lr, 'линейности ЧМ')
+                            if action == 'break':
+                                break
+                            if action == 'failed':
+                                failed = True
+                                break
+                    except RuntimeError as e:
+                        self._diagnose(f"Тест 9: {e}")
+                        self.final_status = 'error'
+                        self.termination_reason = str(e)
+                        failed = True
 
             # =================== ТЕСТ 10 ===================
             if (not failed and self.final_status not in ('stopped', 'error')
