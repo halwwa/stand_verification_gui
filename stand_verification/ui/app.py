@@ -16,7 +16,7 @@ from stand_verification.measurement.engine import (
     TEST_FREQ, TEST_LEVEL,
     TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
     TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM,
-    TEST_FM_LINEARITY, TEST_FM_DEVIATION, TEST_AM_PEAKS,
+    TEST_FM_LINEARITY, TEST_FM_DEVIATION, TEST_AM_PEAKS, TEST_PM_PEAKS,
 )
 from stand_verification.ui.device_card import DeviceCard
 from stand_verification.config import DEVICE_DEFAULTS, REPORT_PATH_DEFAULT
@@ -35,6 +35,7 @@ TEST_NAMES = [
     ("Тест 9: Проверка линейности шкал ЧМ",                      TEST_FM_LINEARITY),
     ("Тест 10: Погрешность измерения пиковых значений девиации", TEST_FM_DEVIATION),
     ("Тест 11: Погрешность измерения пиковых значений Кам",     TEST_AM_PEAKS),
+    ("Тест 12: Погрешность измерения пиковых значений индекса ФМ", TEST_PM_PEAKS),
 ]
 
 
@@ -138,7 +139,7 @@ class StandApp:
 
         columns = ("check", "name", "status")
         self.tests_tree = ttk.Treeview(tests, columns=columns, show="headings",
-                                       height=11, selectmode="none")
+                                       height=12, selectmode="none")
         self.tests_tree.heading("check", text="✓")
         self.tests_tree.heading("name", text="Тест")
         self.tests_tree.heading("status", text="Статус")
@@ -453,6 +454,11 @@ class StandApp:
                     body = (f"Несущая: {freq_mhz:g} МГц\n"
                             f"Максимальная погрешность Кам: {error_value:.2f} %\n"
                             f"Допуск: ±{tolerance_value:.2f} %")
+                elif stage == 'pm_peaks':
+                    title = 'Провал допуска — индекс ФМ'
+                    body = (f"Несущая: {freq_mhz:g} МГц\n"
+                            f"Максимальная погрешность индекса: {error_value:.3f} рад\n"
+                            f"Допуск: ±{tolerance_value:.3f} рад")
                 elif stage == 'fm_deviation':
                     title = 'Провал допуска — девиация ЧМ'
                     body = (f"Частота: {freq_mhz:g} МГц\n"
