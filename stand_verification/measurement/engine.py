@@ -14,7 +14,7 @@ from stand_verification.config import (
     F_LIST, U_LIST_0, U_LIST, INITIAL_POWER_DBM, NOISE_POWER_DBM,
     TEST_FREQ, TEST_LEVEL, TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
     TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM, TEST_FM_LINEARITY,
-    TEST_FM_DEVIATION, TEST_AM_PEAKS,
+    TEST_FM_DEVIATION, TEST_AM_PEAKS, TEST_PM_PEAKS,
     NOT_IMPLEMENTED, SKIP_FOR_FM_PM_MHZ,
 )
 from stand_verification.measurement.frequency import measure_frequency
@@ -28,10 +28,11 @@ from stand_verification.measurement.thd_fm import run_thd_fm
 from stand_verification.measurement.fm_linearity import run_fm_linearity
 from stand_verification.measurement.fm_deviation import run_fm_deviation
 from stand_verification.measurement.am_peaks import run_am_peaks
+from stand_verification.measurement.pm_peaks import run_pm_peaks
 from stand_verification.models import (
     FrequencyResult, LevelResult, NoiseResult,
     TransitionResult, ThdAmResult, ThdFmResult,
-    LinearityResult, DeviationResult, KamResult,
+    LinearityResult, DeviationResult, KamResult, PmResult,
 )
 from stand_verification.devices.smb100a import SMB100A
 from stand_verification.devices.sk3_50 import SK350
@@ -74,6 +75,7 @@ class MeasurementEngine:
             TEST_FM_LINEARITY: [],
             TEST_FM_DEVIATION: [],
             TEST_AM_PEAKS: [],
+            TEST_PM_PEAKS: [],
         }
 
         self.final_status = 'not_started'
@@ -175,7 +177,9 @@ class MeasurementEngine:
         if TEST_FM_DEVIATION in self.active_tests:
             total += 28  
         if TEST_AM_PEAKS in self.active_tests:
-            total += 12   
+            total += 12
+        if TEST_PM_PEAKS in self.active_tests:
+            total += 8  
         return total
 
     # ========================================================
@@ -217,6 +221,7 @@ class MeasurementEngine:
             TEST_FM_LINEARITY: 10 if TEST_FM_LINEARITY in self.active_tests else 0,
             TEST_FM_DEVIATION: 28 if TEST_FM_DEVIATION in self.active_tests else 0,
             TEST_AM_PEAKS: 12 if TEST_AM_PEAKS in self.active_tests else 0,
+            TEST_PM_PEAKS: 8 if TEST_PM_PEAKS in self.active_tests else 0,
         }
 
         self._log("─" * 50)
@@ -594,7 +599,40 @@ class MeasurementEngine:
                         self.final_status = 'error'
                         self.termination_reason = str(e)
                         failed = True
-                        
+                        # =================== ТЕСТ 12 ===================
+            if (not failed and self.final_status not in ('stopped', 'error')
+                    and TEST_PM_PEAKS in self.active_tests
+                    and not self._stopped()):
+                point_idx += 1
+                if progress_callback:
+                    try:
+                        progress_callback(point_idx, total_points,
+                                          "Тест 12 — Погрешность ФМ")
+                    except InterruptedError:
+                        self.stop_event.set()
+                        self.termination_reason = 'Остановка запрошена'
+                        self.final_status = 'stopped'
+                if not self._stopped():
+                    try:
+                        pm_rows = run_pm_peaks(
+                            self.gen, self.sk3,
+                            self.stop_event, self._log,
+                            confirm_callback=self.confirm_callback,
+                        )
+                        for pr in pm_rows:
+                            self.results[TEST_PM_PEAKS].append(pr)
+                            action = self._handle_row_status(pr, 'ФМ')
+                            if action == 'break':
+                                break
+                            if action == 'failed':
+                                failed = True
+                                break
+                    except RuntimeError as e:
+                        self._diagnose(f"Тест 12: {e}")
+                        self.final_status = 'error'
+                        self.termination_reason = str(e)
+                        failed = True
+
             # =================== ФИНАЛИЗАЦИЯ ===================
             if not failed and self.final_status not in ('stopped', 'error'):
                 if self._stopped():
