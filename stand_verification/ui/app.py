@@ -16,7 +16,7 @@ from stand_verification.measurement.engine import (
     TEST_FREQ, TEST_LEVEL,
     TEST_AM_NOISE, TEST_FM_NOISE, TEST_PM_NOISE,
     TEST_AM_FM_TRANSITION, TEST_THD_AM, TEST_THD_FM,
-    TEST_FM_DEVIATION,
+    TEST_FM_LINEARITY, TEST_FM_DEVIATION,
 )
 from stand_verification.ui.device_card import DeviceCard
 from stand_verification.config import DEVICE_DEFAULTS, REPORT_PATH_DEFAULT
@@ -32,6 +32,7 @@ TEST_NAMES = [
     ("Тест 6: Переход АМ-ЧМ, ЧМ-АМ",                            TEST_AM_FM_TRANSITION),
     ("Тест 7: КГ АМ",                                           TEST_THD_AM),
     ("Тест 8: КГ ЧМ",                                           TEST_THD_FM),
+    ("Тест 9: Проверка линейности шкал ЧМ",                      TEST_FM_LINEARITY),
     ("Тест 10: Погрешность измерения пиковых значений девиации", TEST_FM_DEVIATION),
 ]
 
@@ -136,7 +137,7 @@ class StandApp:
 
         columns = ("check", "name", "status")
         self.tests_tree = ttk.Treeview(tests, columns=columns, show="headings",
-                                       height=9, selectmode="none")
+                                       height=10, selectmode="none")
         self.tests_tree.heading("check", text="✓")
         self.tests_tree.heading("name", text="Тест")
         self.tests_tree.heading("status", text="Статус")
@@ -441,6 +442,11 @@ class StandApp:
                     body = (f"Частота: {freq_mhz:g} МГц\n"
                             f"ΔКГ: {error_value:.3f} %\n"
                             f"Допуск: ±{tolerance_value:.3f} %")
+                elif stage == 'fm_linearity':
+                    title = 'Провал допуска — линейность ЧМ'
+                    body = (f"Частота: {freq_mhz:g} МГц\n"
+                            f"Максимальная погрешность: {error_value:.3f} кГц\n"
+                            f"Допуск: ±{tolerance_value:.3f} кГц")
                 elif stage == 'fm_deviation':
                     title = 'Провал допуска — девиация ЧМ'
                     body = (f"Частота: {freq_mhz:g} МГц\n"

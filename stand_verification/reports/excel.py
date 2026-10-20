@@ -68,6 +68,12 @@ def export_excel(snapshot, filepath, log_callback=None):
              'КГ СК3-50, %', 'КГ С6-22, %', 'Допуск, %',
              'Изм. Частота С6-22', 'Фильтр, кГц', 'Статус'],
         ),
+        'fm_linearity': (
+            'ЧМ_лин',
+            ['Шкала, кГц', 'Дев част, кГц', 'Делитель',
+             '+F, кГц', '-F, кГц',
+             '+dF, кГц', '-dF, кГц', 'Допуск, кГц', 'Статус'],
+        ),
         'fm_deviation': (
             'ЧМ',
             ['Fm, кГц', 'Дев част, кГц', '+F, кГц', '-F, кГц',
@@ -131,6 +137,15 @@ def export_excel(snapshot, filepath, log_callback=None):
                     row.mod_freq_hz, row.set_deviation_hz, row.meas_deviation_hz,
                     row.thd_sk3, row.thd_c6, row.tolerance,
                     row.mod_freq_c6, row.band_str,
+                    STATUS_LABELS.get(row.status, row.status),
+                ]
+                status_col = 9
+            elif key == 'fm_linearity':
+                values = [
+                    row.scale_khz, row.set_deviation_khz, row.divisor,
+                    row.peak_plus_khz, row.peak_minus_khz,
+                    row.delta_plus_khz, row.delta_minus_khz,
+                    row.tolerance_khz,
                     STATUS_LABELS.get(row.status, row.status),
                 ]
                 status_col = 9
