@@ -223,6 +223,14 @@ class StandApp:
                                     command=self.on_retry_shutdown, state='disabled')
         self.retry_btn.pack(side='left', padx=8)
 
+        self.export_log_btn = ttk.Button(globals_row, text="💾 Выгрузить лог",
+                                          command=self.on_export_log)
+        self.export_log_btn.pack(side='left', padx=8)
+
+        self.clear_log_btn = ttk.Button(globals_row, text="🗑 Очистить лог",
+                                         command=self.on_clear_log)
+        self.clear_log_btn.pack(side='left', padx=8)
+
     def _build_graphs_tab(self):
         ttk.Label(self.tab_graphs,
                   text="Здесь будут таблица теста частоты и график теста уровня.\n"
@@ -591,6 +599,45 @@ class StandApp:
                 self.callbacks.put(lambda err=err_text: self.log(
                     f"❌ Не удалось сохранить отчёт: {err}"))
                 return None, f'{e}; резервный путь: {e2}'
+    def on_export_log(self):
+        """Сохранить содержимое журнала в текстовый файл."""
+        # Берём имя по умолчанию: log_YYYYMMDD_HHMMSS.txt
+        default_name = datetime.now().strftime("log_%Y%m%d_%H%M%S.txt")
+
+        # Папка отчётов — по умолчанию. Если пустая — текущая.
+        default_dir = self.report_path_var.get().strip() or "."
+        default_path = os.path.join(default_dir, default_name)
+
+        path = filedialog.asksaveasfilename(
+            title="Сохранить журнал",
+            defaultextension=".txt",
+            initialfile=default_name,
+            initialdir=default_dir if os.path.isdir(default_dir) else ".",
+            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
+        )
+
+        if not path:
+            return  # пользователь отменил
+
+        try:
+            content = self.log_text.get("1.0", "end-1c")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            messagebox.showinfo("Лог сохранён", f"Журнал сохранён:\n{path}")
+            self.log(f"Журнал сохранён в файл: {path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка сохранения", f"Не удалось сохранить лог:\n{e}")
+
+    def on_clear_log(self):
+        """Очистить журнал."""
+        if not messagebox.askyesno("Очистить журнал?",
+                                    "Содержимое журнала будет удалено.\n"
+                                    "Продолжить?"):
+            return
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+        self.log("Журнал очищен.")
 
     def on_emergency_stop(self):
         if not self.tests_running:
