@@ -177,7 +177,7 @@ class MeasurementEngine:
         if TEST_FM_DEVIATION in self.active_tests:
             total += 28  
         if TEST_AM_PEAKS in self.active_tests:
-            total += 12
+            total += 21
         if TEST_PM_PEAKS in self.active_tests:
             total += 8  
         return total
@@ -220,7 +220,7 @@ class MeasurementEngine:
             TEST_THD_FM: 18 if TEST_THD_FM in self.active_tests else 0,
             TEST_FM_LINEARITY: 10 if TEST_FM_LINEARITY in self.active_tests else 0,
             TEST_FM_DEVIATION: 28 if TEST_FM_DEVIATION in self.active_tests else 0,
-            TEST_AM_PEAKS: 12 if TEST_AM_PEAKS in self.active_tests else 0,
+            TEST_AM_PEAKS: 21 if TEST_AM_PEAKS in self.active_tests else 0,
             TEST_PM_PEAKS: 8 if TEST_PM_PEAKS in self.active_tests else 0,
         }
 
