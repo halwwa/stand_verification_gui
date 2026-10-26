@@ -10,7 +10,8 @@
 """
 
 from stand_verification.config import (
-    NOISE_SETTLE_DELAY, FM_LFILT_LIST_KHZ, SKIP_FOR_FM_PM_MHZ,
+    NOISE_SETTLE_DELAY, NOISE_SETTLE_DELAY_EXTENDED,
+    FM_LFILT_LIST_KHZ, SKIP_FOR_FM_PM_MHZ,
 )
 from stand_verification.models import NoiseResult
 from stand_verification.measurement.tolerances import (
@@ -38,11 +39,17 @@ def measure_fm_noise(gen, sk3, stop_event, log, freq_mhz,
     if stop_event.wait(2.0):
         return results
 
-    def _measure_band(high_khz, label):
+    def _measure_band( high_khz, label):
         """Измерить одну полосу, вернуть NoiseResult или None."""
         try:
+            # Задержка: 20 сек для полос 0.3-3.4 и 0.02-3.4, иначе 15
+            if high_khz in (3.4,):
+                wait_s = NOISE_SETTLE_DELAY_EXTENDED
+            else:
+                wait_s = NOISE_SETTLE_DELAY
+            
             sk3.set_filter_lp_khz(high_khz)
-            if stop_event.wait(NOISE_SETTLE_DELAY):
+            if stop_event.wait(wait_s):
                 return None
 
             value = sk3.read_rms()
@@ -53,9 +60,15 @@ def measure_fm_noise(gen, sk3, stop_event, log, freq_mhz,
             log(f"   fm    : полоса {label} кГц, шум {value:.1f} Гц, "
                 f"допуск ±{tolerance:.1f} Гц → {emoji}")
 
+             # Если это полоса 0.02-X — то низ 0.02. Иначе — 0.3.
+            if label == '0.3-3.4':
+                low = 0.3
+            else:
+                low = 0.02
+
             row = NoiseResult(
                 frequency_mhz=f_val,
-                band_low_khz=0.3,
+                band_low_khz=low,
                 band_high_khz=high_khz,
                 noise_value=round(value, 1),
                 tolerance=round(tolerance, 1),

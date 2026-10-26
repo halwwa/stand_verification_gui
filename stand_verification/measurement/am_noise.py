@@ -17,7 +17,7 @@ from stand_verification.config import (
     AM_BAND_LOW_KHZ_20, AM_LFILT_LIST_KHZ,
     AM_BAND_001_MHZ_LOW_KHZ, AM_BAND_001_MHZ_HIGH_KHZ,
     AM_BAND_01_MHZ_LOW_KHZ, AM_BAND_01_MHZ_HIGH_KHZ,
-    AM_TOL_BAND_03_34,
+    AM_TOL_BAND_03_34, NOISE_SETTLE_DELAY_EXTENDED,
 )
 from stand_verification.models import NoiseResult
 from stand_verification.measurement.tolerances import (
@@ -58,8 +58,14 @@ def measure_am_noise(gen, sk3, stop_event, log, freq_mhz,
             if stop_event.wait(1.0):
                 return None
 
+                        # Задержка: 20 сек для полос 0.3-3.4 и 0.02-3.4, иначе 15
+            if high_khz in (3.4,):
+                wait_s = NOISE_SETTLE_DELAY_EXTENDED
+            else:
+                wait_s = NOISE_SETTLE_DELAY
+            
             sk3.set_filter_lp_khz(high_khz)
-            if stop_event.wait(NOISE_SETTLE_DELAY):
+            if stop_event.wait(wait_s):
                 return None
 
             value = sk3.read_rms()
@@ -139,8 +145,8 @@ def measure_am_noise(gen, sk3, stop_event, log, freq_mhz,
         sk3.set_filter_hp_khz(AM_BAND_LOW_KHZ)
         if stop_event.wait(1.0):
             return results
-        sk3.set_filter_lp_khz(AM_BAND_HIGH_MAIN_KHZ)
-        if stop_event.wait(NOISE_SETTLE_DELAY):
+        sk3.set_filter_lp_khz(AM_BAND_HIGH_MAIN_KHZ)  # 3.4
+        if stop_event.wait(NOISE_SETTLE_DELAY_EXTENDED):
             return results
 
         value = sk3.read_rms()
