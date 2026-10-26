@@ -87,12 +87,15 @@ def fm_noise_tolerance(freq_mhz: float, band_high_khz: float) -> float:
 def pm_noise_tolerance(freq_mhz: float, band_high_khz: float) -> float:
     """
     Допуск СКЗ ФМ шума (рад) по частоте несущей и верхней границе полосы.
-    Формулы из старого скрипта.
+    Обновлённые свободные члены (по замечанию папы):
+      - 20 кГц:  + 0.005
+      - 60 кГц:  + 0.005
+      - 200 кГц: + 0.010
     """
     f_ghz = freq_mhz / 1000.0
     if band_high_khz <= 20:
-        return 0.003 * f_ghz + 0.003
-    elif band_high_khz <= 60:
-        return 0.003 * f_ghz + 0.004
-    else:  # 200 кГц
         return 0.003 * f_ghz + 0.005
+    elif band_high_khz <= 60:
+        return 0.003 * f_ghz + 0.005
+    else:  # 200 кГц
+        return 0.003 * f_ghz + 0.010
