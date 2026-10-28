@@ -59,7 +59,7 @@ def measure_am_noise(gen, sk3, stop_event, log, freq_mhz,
                 return None
 
                         # Задержка: 20 сек для полос 0.3-3.4 и 0.02-3.4, иначе 15
-            if high_khz in (3.4,):
+            if high_khz in (1.5, 3.4):
                 wait_s = NOISE_SETTLE_DELAY_EXTENDED
             else:
                 wait_s = NOISE_SETTLE_DELAY

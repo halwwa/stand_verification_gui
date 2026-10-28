@@ -135,7 +135,7 @@ def measure_fm_noise(gen, sk3, stop_event, log, freq_mhz,
             if stop_event.wait(1.0):
                 return results
             sk3.set_filter_lp_khz(1.5)
-            if stop_event.wait(NOISE_SETTLE_DELAY):
+            if stop_event.wait(NOISE_SETTLE_DELAY_EXTENDED):
                 return results
             value = sk3.read_rms()
             require_finite(value, 'СКЗ ЧМ шума')
