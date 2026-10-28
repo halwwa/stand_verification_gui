@@ -38,7 +38,7 @@ GUI-приложение для автоматизированной повер�
 - **Python 3.11+** (для запуска из исходников).
 - **Приборы** — подключены к компьютеру:
   - СК3-50 — по COM-порту.
-  - С6-22 — по COM-порту.
+  - С6-22 — по COM-порту (опционально, нужен для тестов 7, 8).
   - SMB100A — по LAN.
 
 ## Установка (из исходников)
@@ -47,3 +47,82 @@ GUI-приложение для автоматизированной повер�
 git clone https://github.com/halwwa/stand_verification_gui.git
 cd stand_verification_gui
 pip install -r requirements.txt
+```
+
+## Запуск
+
+```bat
+python gui_stand.py
+```
+
+Откроется окно «Стенд автоматизированной поверки радиоприборов».
+
+## Сборка `.exe`
+
+```bat
+python -m PyInstaller --noconfirm --onefile --windowed ^
+    --name "StandGUI" ^
+    --collect-all pyvisa ^
+    --collect-all pyvisa_py ^
+    --collect-all serial ^
+    --collect-all openpyxl ^
+    --hidden-import serial.tools.list_ports ^
+    --add-data "stand_verification;stand_verification" ^
+    gui_stand.py
+```
+
+Готовый файл: `dist/StandGUI.exe` (~40–50 МБ).
+
+## Как пользоваться
+
+1. Подключите приборы (через карточки в окне):
+   - **СК3-50** — выберите COM-порт и 115200 бод → «Подключить».
+   - **С6-22** — выберите COM-порт и 9600 бод → «Подключить».
+   - **SMB100A** — введите IP и порт 5025 → «Подключить».
+2. В блоке «Тестируемый прибор» — проверьте данные (заполняются автоматически).
+3. В списке тестов — отметьте нужные галочками.
+4. Нажмите **«▶ СТАРТ ВСЕХ ВЫБРАННЫХ ТЕСТОВ»**.
+5. Дождитесь завершения. Отчёт Excel сохранится в папку «Путь сохранения».
+
+## Структура проекта
+
+```
+stand_verification/
+├── config.py            # Все константы и настройки
+├── models.py            # Dataclass-модели результатов
+├── devices/             # Драйверы приборов
+│   ├── sk3_50.py        # СК3-50
+│   ├── c6_22.py         # С6-22
+│   └── smb100a.py       # SMB100A
+├── measurement/         # Тесты
+│   ├── engine.py        # Главный движок
+│   ├── frequency.py     # Тест 1
+│   ├── level.py         # Тест 2
+│   ├── am_noise.py      # Тест 3
+│   ├── fm_noise.py      # Тест 4
+│   ├── pm_noise.py      # Тест 5
+│   ├── am_fm_transition.py   # Тест 6
+│   ├── thd_am.py        # Тест 7
+│   ├── thd_fm.py        # Тест 8
+│   ├── fm_linearity.py  # Тест 9
+│   ├── fm_deviation.py  # Тест 10
+│   ├── am_peaks.py      # Тест 11
+│   ├── pm_peaks.py      # Тест 12
+│   └── tolerances.py    # Функции допусков
+├── reports/
+│   └── excel.py         # Экспорт в Excel
+└── ui/
+    ├── app.py           # Главное окно
+    └── device_card.py   # Карточка прибора
+```
+
+## Технологии
+
+- **GUI:** `tkinter` (встроен в Python).
+- **Приборы:** `pyvisa`, `pyvisa-py` (LAN), `pyserial` (COM).
+- **Отчёты:** `openpyxl`.
+- **Сборка:** `pyinstaller`.
+
+## Лицензия
+
+Внутренний проект. Все права — у заказчика.
