@@ -265,7 +265,12 @@ class MeasurementEngine:
                     self.final_status = 'error'
                     failed = True
                     break
+                try:
+                    self.gen.set_power_dbm(INITIAL_POWER_DBM)
+                except Exception as e:
+                    self._diagnose(f"Ошибка сброса уровня на {freq_mhz} МГц: {e}")
 
+                
                 f_val = float(freq_mhz)
 
                 if TEST_FREQ in self.active_tests:
