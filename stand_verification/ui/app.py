@@ -522,6 +522,7 @@ class StandApp:
                 self.callbacks.put(lambda: self.sys_status_var.set(
                     "Безопасное завершение…" if self.close_requested else
                     f"{info_str} ({idx}/{total})"))
+                self.callbacks.put(self._update_finished_tests)
 
             results, final_status = engine.run(progress_callback=progress_cb)
 
@@ -794,6 +795,30 @@ class StandApp:
         values = self.tests_tree.item(test["id"], "values")
         self.tests_tree.item(test["id"], values=(values[0], values[1], label))
         test["status"] = tag
+
+    def _update_finished_tests(self):
+        engine = self.engine
+        if engine is None:
+            return
+        try:
+            summary = engine.summary()
+        except Exception:
+            return
+        for t in self.test_items:
+            tid = t["test_id"]
+            if tid is None:
+                continue
+            info = summary.get(tid, {})
+            st = info.get('status', 'not_started')
+            if st == 'not_started':
+                continue
+            tag, label = {
+                'done':   ('done',  '✔ Пройден'),
+                'warn':   ('warn',  '⚠ Внимание'),
+                'error':  ('error', '✖ Провален'),
+                'incomplete': ('warn', 'Прерван / неполный'),
+            }.get(st, ('idle', '—'))
+            self._set_test_status(t, tag, label)
 
 
 def main():
