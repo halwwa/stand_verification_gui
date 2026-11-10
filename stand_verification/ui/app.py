@@ -84,12 +84,11 @@ class StandApp:
         self.notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
         self.tab_main = ttk.Frame(self.notebook)
-        self.tab_graphs = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_main, text="Главная панель")
-        self.notebook.add(self.tab_graphs, text="Графики и Таблицы")
+        
 
         self._build_main_tab()
-        self._build_graphs_tab()
+        
 
         self.sys_status_var = tk.StringVar(value="Система готова к работе.")
         ttk.Label(root, textvariable=self.sys_status_var,
@@ -231,12 +230,6 @@ class StandApp:
                                          command=self.on_clear_log)
         self.clear_log_btn.pack(side='left', padx=8)
 
-    def _build_graphs_tab(self):
-        ttk.Label(self.tab_graphs,
-                  text="Здесь будут таблица теста частоты и график теста уровня.\n"
-                       "(появятся после реализации — в следующей версии)",
-                  font=("Segoe UI", 11, "italic"),
-                  foreground="#666", justify="center").pack(expand=True)
 
     def log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -797,6 +790,7 @@ class StandApp:
         test["status"] = tag
 
     def _update_finished_tests(self):
+        """Обновляет статусы тестов по мере выполнения."""
         engine = self.engine
         if engine is None:
             return
@@ -804,20 +798,32 @@ class StandApp:
             summary = engine.summary()
         except Exception:
             return
+
         for t in self.test_items:
             tid = t["test_id"]
             if tid is None:
                 continue
             info = summary.get(tid, {})
+            planned = info.get('planned', 0)
+            total = info.get('total', 0)
             st = info.get('status', 'not_started')
-            if st == 'not_started':
-                continue
-            tag, label = {
-                'done':   ('done',  '✔ Пройден'),
-                'warn':   ('warn',  '⚠ Внимание'),
-                'error':  ('error', '✖ Провален'),
-                'incomplete': ('warn', 'Прерван / неполный'),
-            }.get(st, ('idle', '—'))
+
+
+            if 0 < total < planned:
+                if self.stop_event.is_set():
+                    tag, label = ('warn', '⏸ Остановлен')
+                else:
+                    tag, label = ('running', '● Выполняется')
+            elif total == 0:
+                tag, label = ('idle', '— Ожидание')
+            elif st == 'done':
+                tag, label = ('done', '✔ Пройден')
+            elif st == 'warn':
+                tag, label = ('warn', '⚠ Внимание')
+            elif st == 'error':
+                tag, label = ('error', '✖ Провален')
+            else:
+                tag, label = ('idle', '— Ожидание')
             self._set_test_status(t, tag, label)
 
 
