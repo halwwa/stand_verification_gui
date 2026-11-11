@@ -21,10 +21,10 @@ def evaluate(value, tolerance):
     require_finite(tolerance, 'Допуск')
     abs_v = abs(value)
     if abs_v > tolerance:
-        return 'fail', '🔴'
+        return 'fail', 'ПРОВАЛ'
     elif abs_v > TOLERANCE_RATIO_WARN * tolerance:
-        return 'warn', '🟡'
-    return 'ok', '🟢'
+        return 'warn', 'ВНИМАНИЕ'
+    return 'ok', 'OK'
 
 
 # ============================================================
