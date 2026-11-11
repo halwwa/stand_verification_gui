@@ -198,6 +198,11 @@ class StandApp:
                                                   font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
 
+                # Теги для цветного лога
+        self.log_text.tag_configure("ok", foreground="#1b8a1b")       # зелёный
+        self.log_text.tag_configure("warn", foreground="#c79100")     # жёлтый
+        self.log_text.tag_configure("error", foreground="#c01e1e")    # красный
+
         globals_row = ttk.Frame(self.tab_main)
         globals_row.pack(side="bottom", fill="x", padx=4, pady=(0, 4))
 
@@ -234,8 +239,21 @@ class StandApp:
     def log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {msg}\n"
+
+        # Определяем тег по содержимому
+        tag = None
+        if 'ПРОВАЛ' in msg or 'Провал' in msg or 'Ошибка' in msg or '❌' in msg:
+            tag = "error"
+        elif 'ВНИМАНИЕ' in msg or 'Внимание' in msg:
+            tag = "warn"
+        elif ' OK' in msg or '→ OK' in msg:
+            tag = "ok"
+
         self.log_text.configure(state="normal")
-        self.log_text.insert("end", line)
+        if tag:
+            self.log_text.insert("end", line, tag)
+        else:
+            self.log_text.insert("end", line)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
@@ -380,8 +398,14 @@ class StandApp:
         self.reset_btn.state(["disabled"])
         self.stop_btn.configure(state="normal")
 
-        for t in selected_items:
-            self._set_test_status(t, "running", "● Ожидание…")
+                # Невыбранные — оставляем как было. Выбранные — «Ожидание».
+        selected_ids = {t["id"] for t in selected_items}
+        for t in self.test_items:
+            if t["id"] in selected_ids:
+                self._set_test_status(t, "running", "● Ожидание…")
+            else:
+                # Невыбранный — пустой статус
+                self._set_test_status(t, "idle", "—")
 
         self.sys_status_var.set("Запуск движка измерений…")
         self.progress_var.set(0)
@@ -471,7 +495,7 @@ class StandApp:
                             f"Значение: {error_value}\n"
                             f"Допуск: {tolerance_value}")
 
-                self.log(f"🔴 Провал: {body.replace(chr(10), ' | ')}")
+                self.log(f"ПРОВАЛ: {body.replace(chr(10), ' | ')}")
 
                 answer = messagebox.askyesno(
                     title,
@@ -482,9 +506,9 @@ class StandApp:
                 )
                 result_holder['decision'] = bool(answer)
                 if not answer:
-                    self.log("⏹ Оператор выбрал «Остановить» при провале.")
+                    self.log("Оператор выбрал «Остановить» при провале.")
                 else:
-                    self.log("▶ Оператор выбрал «Продолжить» при провале.")
+                    self.log("Оператор выбрал «Продолжить» при провале.")
             except Exception as e:
                 self.log(f"⚠ Ошибка в диалоге провала: {e}")
             finally:
@@ -710,6 +734,22 @@ class StandApp:
                                       'частичный отчёт перед выходом?'):
                 return
             self.stop_event.set()
+
+        # Сохранить настройки ПЕРЕД закрытием
+        try:
+            from .user_config import load_config, save_config
+            cfg = load_config()
+            for card in self.cards:
+                if card.kind == "com":
+                    cfg[f"{card.title}_port"] = card.port_var.get()
+                    cfg[f"{card.title}_baud"] = card.baud_var.get()
+                else:
+                    cfg[f"{card.title}_ip"] = card.ip_var.get()
+                    cfg[f"{card.title}_lan_port"] = card.lanport_var.get()
+            save_config(cfg)
+        except Exception:
+            pass
+
         self.close_requested = True
         self._set_controls_locked(True)
         self.sys_status_var.set('Безопасное завершение. Ожидание текущих операций…')
@@ -802,6 +842,9 @@ class StandApp:
         for t in self.test_items:
             tid = t["test_id"]
             if tid is None:
+                continue
+            # Не трогаем невыбранные
+            if not t.get("checked", True):
                 continue
             info = summary.get(tid, {})
             planned = info.get('planned', 0)

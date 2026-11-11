@@ -38,7 +38,7 @@ class DeviceCard:
                                         width=8)
             self.baud_cb.grid(row=0, column=3, padx=(4, 12))
         else:
-            ttk.Label(self.settings, text="IP:").grid(row=0, column=0, sticky="w")
+            ttk.Label(self.settings, text="IP/Hostname:").grid(row=0, column=0, sticky="w")
             self.ip_var = tk.StringVar(value=defaults.get("ip", "192.168.0.113"))
             ttk.Entry(self.settings, textvariable=self.ip_var, width=16).grid(
                 row=0, column=1, padx=(4, 12))
@@ -46,6 +46,23 @@ class DeviceCard:
             self.lanport_var = tk.StringVar(value=str(defaults.get("lan_port", 5025)))
             ttk.Entry(self.settings, textvariable=self.lanport_var, width=8).grid(
                 row=0, column=3, padx=(4, 12))
+
+                # Загрузить сохранённые значения
+        try:
+            from .user_config import load_config
+            cfg = load_config()
+            if self.kind == "com":
+                if cfg.get(f"{self.title}_port"):
+                    self.port_var.set(cfg[f"{self.title}_port"])
+                if cfg.get(f"{self.title}_baud"):
+                    self.baud_var.set(cfg[f"{self.title}_baud"])
+            else:
+                if cfg.get(f"{self.title}_ip"):
+                    self.ip_var.set(cfg[f"{self.title}_ip"])
+                if cfg.get(f"{self.title}_lan_port"):
+                    self.lanport_var.set(cfg[f"{self.title}_lan_port"])
+        except Exception:
+            pass
         self.status_row = ttk.Frame(self.frame)
         self.status_row.pack(fill="x", pady=(8, 0))
         ttk.Label(self.status_row, text="Статус:").pack(side="left")
@@ -118,6 +135,19 @@ class DeviceCard:
 
     def _on_connected(self, idn):
         self.set_status("● Подключён", "green")
+                # Сохранить последние настройки
+        try:
+            from .user_config import load_config, save_config
+            cfg = load_config()
+            if self.kind == "com":
+                cfg[f"{self.title}_port"] = self.port_var.get()
+                cfg[f"{self.title}_baud"] = self.baud_var.get()
+            else:
+                cfg[f"{self.title}_ip"] = self.ip_var.get()
+                cfg[f"{self.title}_lan_port"] = self.lanport_var.get()
+            save_config(cfg)
+        except Exception:
+            pass
         self.answer_var.set(idn)
         self.connect_btn.state(["disabled" if self.locked else "!disabled"])
         self.connect_btn.configure(text="Отключить")
