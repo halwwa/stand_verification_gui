@@ -28,6 +28,7 @@ GUI-приложение для автоматизированной повер�
 | 12 | Погрешность пиковых значений индекса ФМ | СК3-50, SMB100A |
 
 - Цветовая индикация результатов: 🟢 Пройден / 🟡 Внимание / 🔴 Провален.
+- Динамические статусы тестов: «● Выполняется» → «✔ Пройден / ⚠ Внимание / ✖ Провален».
 - Диалог при провале: «Продолжить / Остановить».
 - Сохранение отчёта в Excel — отдельный лист для каждого теста.
 - Лог с возможностью сохранения в файл.
@@ -60,18 +61,10 @@ python gui_stand.py
 ## Сборка `.exe`
 
 ```bat
-python -m PyInstaller --noconfirm --onefile --windowed ^
-    --name "StandGUI" ^
-    --collect-all pyvisa ^
-    --collect-all pyvisa_py ^
-    --collect-all serial ^
-    --collect-all openpyxl ^
-    --hidden-import serial.tools.list_ports ^
-    --add-data "stand_verification;stand_verification" ^
-    gui_stand.py
+python -m PyInstaller --noconfirm --onefile --windowed --name "StandGUI" --collect-all pyvisa --collect-all pyvisa_py --collect-all serial --collect-all openpyxl --hidden-import serial.tools.list_ports --add-data "stand_verification;stand_verification" --exclude-module matplotlib --exclude-module seaborn --exclude-module numpy --exclude-module pandas --exclude-module scipy --exclude-module PIL --exclude-module IPython --exclude-module notebook --exclude-module jupyter --exclude-module pytest --exclude-module test gui_stand.py
 ```
 
-Готовый файл: `dist/StandGUI.exe` (~40–50 МБ).
+Готовый файл: `dist/StandGUI.exe`. (~15 МБ)
 
 ## Как пользоваться
 
@@ -83,6 +76,17 @@ python -m PyInstaller --noconfirm --onefile --windowed ^
 3. В списке тестов — отметьте нужные галочками.
 4. Нажмите **«▶ СТАРТ ВСЕХ ВЫБРАННЫХ ТЕСТОВ»**.
 5. Дождитесь завершения. Отчёт Excel сохранится в папку «Путь сохранения».
+
+## Статусы тестов
+
+Во время выполнения тестов их статусы обновляются:
+
+- **— Ожидание** — тест ещё не начался.
+- **● Выполняется** — тест выполняется (синий).
+- **✔ Пройден** — тест завершён без провалов (зелёный).
+- **⚠ Внимание** — были точки в «жёлтой зоне» (жёлтый).
+- **✖ Провален** — были точки вне допуска (красный).
+- **⏸ Остановлен** — тест прерван оператором.
 
 ## Структура проекта
 
@@ -123,6 +127,3 @@ stand_verification/
 - **Отчёты:** `openpyxl`.
 - **Сборка:** `pyinstaller`.
 
-## Лицензия
-
-Внутренний проект. Все права — у заказчика.
