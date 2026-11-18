@@ -525,6 +525,8 @@ class StandApp:
             stop_event=self.stop_event,
             confirm_callback=self._confirm_fail_sync,
             log_callback=lambda msg: self.callbacks.put(lambda: self.log(msg)),
+            test_started_callback=lambda tid: self.callbacks.put(
+                lambda: self._on_test_started(tid)),
         )
         self.engine = engine
         try:
@@ -823,6 +825,13 @@ class StandApp:
         values = self.tests_tree.item(test["id"], "values")
         self.tests_tree.item(test["id"], values=(values[0], values[1], label))
         test["status"] = tag
+
+    def _on_test_started(self, test_id):
+        """Вызывается движком перед запуском каждого отдельного теста."""
+        for t in self.test_items:
+            if t["test_id"] == test_id:
+                self._set_test_status(t, "running", "● Выполняется")
+                break
 
     def _update_finished_tests(self):
         """Обновляет статусы тестов по мере выполнения."""

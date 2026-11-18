@@ -47,7 +47,8 @@ class MeasurementEngine:
     """Единый движок измерений."""
 
     def __init__(self, gen, sk3, active_tests=None, c6=None,
-                 log_callback=None, stop_event=None, confirm_callback=None):
+                 log_callback=None, stop_event=None, confirm_callback=None,
+                 test_started_callback=None):
         self.gen = gen if isinstance(gen, SMB100A) else SMB100A(gen)
         self.sk3 = sk3 if isinstance(sk3, SK350) else SK350(sk3)
         if c6 is None:
@@ -58,6 +59,7 @@ class MeasurementEngine:
         self.log = log_callback if log_callback is not None else (lambda msg: None)
         self.stop_event = stop_event if stop_event is not None else threading.Event()
         self.confirm_callback = confirm_callback
+        self.test_started_callback = test_started_callback
 
         if active_tests is None:
             active_tests = [TEST_FREQ, TEST_LEVEL]
@@ -425,6 +427,11 @@ class MeasurementEngine:
                     and TEST_AM_FM_TRANSITION in self.active_tests
                     and not self._stopped()):
                 point_idx += 1
+                if self.test_started_callback:
+                    try:
+                        self.test_started_callback(TEST_AM_FM_TRANSITION)
+                    except Exception:
+                        pass
                 if progress_callback:
                     try:
                         progress_callback(point_idx, total_points, "Тест 6 — Переход АМ↔ЧМ")
@@ -451,6 +458,11 @@ class MeasurementEngine:
                     and TEST_THD_AM in self.active_tests
                     and not self._stopped()):
                 point_idx += 1
+                if self.test_started_callback:
+                    try:
+                        self.test_started_callback(TEST_THD_AM)
+                    except Exception:
+                        pass
                 if progress_callback:
                     try:
                         progress_callback(point_idx, total_points, "Тест 7 — КГ АМ")
@@ -479,6 +491,7 @@ class MeasurementEngine:
                     and TEST_THD_FM in self.active_tests
                     and not self._stopped()):
                 point_idx += 1
+                self.test_started_callback(TEST_THD_FM)
                 if progress_callback:
                     try:
                         progress_callback(point_idx, total_points, "Тест 8 — КГ ЧМ")
@@ -507,6 +520,7 @@ class MeasurementEngine:
                     and TEST_FM_LINEARITY in self.active_tests
                     and not self._stopped()):
                 point_idx += 1
+                self.test_started_callback(TEST_FM_LINEARITY)
                 if progress_callback:
                     try:
                         progress_callback(point_idx, total_points,
@@ -541,6 +555,7 @@ class MeasurementEngine:
                     and TEST_FM_DEVIATION in self.active_tests
                     and not self._stopped()):
                 point_idx += 1
+                self.test_started_callback(TEST_FM_DEVIATION)
                 if progress_callback:
                     try:
                         progress_callback(point_idx, total_points,
@@ -576,6 +591,7 @@ class MeasurementEngine:
                     and TEST_AM_PEAKS in self.active_tests
                     and not self._stopped()):
                 point_idx += 1
+                self.test_started_callback(TEST_AM_PEAKS)
                 if progress_callback:
                     try:
                         progress_callback(point_idx, total_points,
@@ -609,6 +625,7 @@ class MeasurementEngine:
                     and TEST_PM_PEAKS in self.active_tests
                     and not self._stopped()):
                 point_idx += 1
+                self.test_started_callback(TEST_PM_PEAKS)
                 if progress_callback:
                     try:
                         progress_callback(point_idx, total_points,
