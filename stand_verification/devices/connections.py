@@ -20,6 +20,25 @@ def open_serial(serial_module, port, baud):
         raise
 
 
+def open_socket(socket_module, ip, port):
+    sock = socket_module.create_connection((ip, port), timeout=2)
+    inst = None
+    try:
+        sock.settimeout(2)
+        inst = sock.makefile('rwb')
+        inst.write(b'*IDN?\n')
+        inst.flush()
+        time.sleep(0.3)
+        idn = inst.readline().decode('utf-8', errors='ignore').strip()
+        if not idn:
+            time.sleep(0.3)
+            idn = inst.readline().decode('utf-8', errors='ignore').strip()
+        return sock, inst, idn
+    except Exception:
+        close_resources(inst, sock)
+        raise
+
+
 def open_visa(visa_module, ip, port):
     rm = visa_module.ResourceManager('@py')
     inst = None

@@ -740,12 +740,7 @@ class StandApp:
             from .user_config import load_config, save_config
             cfg = load_config()
             for card in self.cards:
-                if card.kind == "com":
-                    cfg[f"{card.title}_port"] = card.port_var.get()
-                    cfg[f"{card.title}_baud"] = card.baud_var.get()
-                else:
-                    cfg[f"{card.title}_ip"] = card.ip_var.get()
-                    cfg[f"{card.title}_lan_port"] = card.lanport_var.get()
+                card.update_config(cfg)
             save_config(cfg)
         except Exception:
             pass

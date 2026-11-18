@@ -334,7 +334,7 @@ PM_PEAKS_CALIBRATION_ATTEMPT_WAIT_S = 2.0
 # ---- Дефолты для приборов ----
 
 DEVICE_DEFAULTS = (
-    ("СК3-50", "com", {"port": "", "baud": 115200}, "auto_fill"),
+    ("СК3-50", "com_lan", {"port": "", "baud": 115200, "ip": "", "lan_port": 5025}, "auto_fill"),
     ("С6-22", "com", {"port": "", "baud": 9600}, None),
     ("SMB100A (R&S)", "lan", {"ip": "192.168.0.113", "lan_port": 5025}, None),
 )
