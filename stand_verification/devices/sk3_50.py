@@ -122,30 +122,33 @@ class SK350:
         self.session.write(cmd.encode('utf-8'))
         self.session.flush()
 
-    def cal_current(self, timeout_s=20.0, attempts=3, attempt_wait_s=2.0):
-        """
-        CAL:CURR? — запуск калибровки. Ждёт ответ '0' (успех).
-
-        Возвращает True при успехе, False при неудаче.
-
-        Логика:
-          1. Отправить CAL:CURR?.
-          2. Подождать timeout_s секунд (у приборов долгая калибровка).
-          3. До attempts раз прочитать ответ. Если '0' — успех.
-        """
+    def cal_current(self, timeout_s=20.0, attempts=3, attempt_wait_s=2.0,
+                    log_callback=None):
+        """CAL:CURR? — запуск калибровки. Ждёт '0' (успех)."""
         import time as _time
+        if log_callback:
+            log_callback(f"   CAL: отправлено 'CAL:CURR?', ждём {timeout_s:.0f} с…")
+
         self.session.write(b'CAL:CURR?\n')
         self.session.flush()
-
         _time.sleep(timeout_s)
 
-        for _ in range(attempts):
+        for i in range(attempts):
             _time.sleep(attempt_wait_s)
             try:
                 raw = self.session.readline()
                 response = raw.decode('ascii', errors='ignore').strip()
+                if log_callback:
+                    log_callback(f"   CAL: попытка {i+1}/{attempts}, "
+                                 f"сырые байты = {raw!r}, "
+                                 f"decode = {response!r}")
                 if response == '0':
+                    if log_callback:
+                        log_callback("   CAL: успех (получен '0')")
                     return True
-            except Exception:
-                pass
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"   CAL: ошибка чтения — {e}")
+        if log_callback:
+            log_callback("   CAL: не удалось получить '0' за все попытки")
         return False
