@@ -79,9 +79,10 @@ def run_pm_peaks(gen, sk3, stop_event, log, confirm_callback=None):
     log("   Калибровка СК3-50 (CAL:CURR?)…")
     try:
         calibrated = sk3.cal_current(
-            timeout_s=PM_PEAKS_CALIBRATION_WAIT_S,
-            attempts=PM_PEAKS_CALIBRATION_ATTEMPTS,
-            attempt_wait_s=PM_PEAKS_CALIBRATION_ATTEMPT_WAIT_S,
+            timeout_s=LIN_CALIBRATION_WAIT_S,
+            attempts=LIN_CALIBRATION_ATTEMPTS,
+            attempt_wait_s=LIN_CALIBRATION_ATTEMPT_WAIT_S,
+            log_callback=log,
         )
     except Exception as e:
         log(f"   ❌ Ошибка калибровки: {e}")

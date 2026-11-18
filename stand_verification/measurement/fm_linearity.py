@@ -80,6 +80,7 @@ def run_fm_linearity(gen, sk3, stop_event, log, confirm_callback=None):
             timeout_s=LIN_CALIBRATION_WAIT_S,
             attempts=LIN_CALIBRATION_ATTEMPTS,
             attempt_wait_s=LIN_CALIBRATION_ATTEMPT_WAIT_S,
+            log_callback=log,
         )
     except Exception as e:
         log(f"   ❌ Ошибка калибровки: {e}")
