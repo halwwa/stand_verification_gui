@@ -24,8 +24,11 @@ def open_socket(socket_module, ip, port):
     sock = socket_module.create_connection((ip, port), timeout=2)
     inst = None
     try:
-        sock.settimeout(2)
+        sock.settimeout(10)
         inst = sock.makefile('rwb')
+        # Python 3.14: makefile('rwb') -> BufferedRWPair без .raw,
+        # поэтому ссылку на сокет сохраняем явно (нужно адаптеру СК3-50)
+        inst._raw_sock = sock
         inst.write(b'*IDN?\n')
         inst.flush()
         time.sleep(0.3)

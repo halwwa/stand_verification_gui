@@ -1,3 +1,4 @@
+import socket
 import unittest
 from unittest.mock import Mock, patch
 
@@ -90,6 +91,52 @@ class DeviceTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, 'IDN write failed'):
             open_serial(Mock(Serial=Mock(return_value=session)), 'COM1', 9600)
         session.close.assert_called_once_with()
+
+
+class Sk3LanRecoveryTests(unittest.TestCase):
+    """LAN raw socket: makefile, отравленный таймаутом, должен восстанавливаться."""
+
+    def _make_meter(self):
+        # имитация прибора на другом конце сокета
+        dev, app = socket.socketpair()
+        app.settimeout(0.5)
+        inst = app.makefile('rwb')
+        inst._raw_sock = app      # как делает open_socket()
+        return SK350(inst), dev, app
+
+    def test_get_raw_socket_finds_socket_under_makefile(self):
+        meter, dev, app = self._make_meter()
+        try:
+            self.assertIs(meter._get_raw_socket(), app)
+        finally:
+            dev.close()
+            app.close()
+
+    def test_read_recovers_from_poisoned_makefile(self):
+        # после таймаута makefile навсегда даёт
+        # OSError 'cannot read from timed out object' — чтение должно восстановиться
+        meter, dev, app = self._make_meter()
+        try:
+            with self.assertRaises(OSError):
+                meter.session.readline()
+            dev.sendall(b'55.5\n')
+            self.assertEqual(meter.read_peak(), 55.5)
+            self.assertFalse(meter.session.closed)
+        finally:
+            dev.close()
+            app.close()
+
+    def test_cal_current_polls_raw_socket_with_poisoned_makefile(self):
+        meter, dev, app = self._make_meter()
+        try:
+            with self.assertRaises(OSError):
+                meter.session.readline()
+            dev.sendall(b'0\n')
+            self.assertTrue(meter.cal_current(timeout_s=5, attempt_wait_s=0.2))
+            self.assertEqual(meter.last_cal_response, '0')
+        finally:
+            dev.close()
+            app.close()
 
 
 if __name__ == '__main__':
