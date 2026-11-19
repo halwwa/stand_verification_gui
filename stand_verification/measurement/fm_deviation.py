@@ -78,17 +78,17 @@ def run_fm_deviation(gen, sk3, stop_event, log, confirm_callback=None):
     log("   Калибровка СК3-50 (CAL:CURR?)…")
     try:
         calibrated = sk3.cal_current(
-            timeout_s=LIN_CALIBRATION_WAIT_S,
-            attempts=LIN_CALIBRATION_ATTEMPTS,
-            attempt_wait_s=LIN_CALIBRATION_ATTEMPT_WAIT_S,
-            log_callback=log,
+            timeout_s=DEV_CALIBRATION_WAIT_S,
+            attempts=DEV_CALIBRATION_ATTEMPTS,
+            attempt_wait_s=DEV_CALIBRATION_ATTEMPT_WAIT_S,
         )
     except Exception as e:
         log(f"   ❌ Ошибка калибровки: {e}")
         return results
 
     if not calibrated:
-        log("   ❌ Калибровка не удалась — тест остановлен.")
+        log(f"   ❌ Калибровка не удалась — тест остановлен. "
+        f"Последний ответ прибора: {sk3.last_cal_response!r}")
         raise RuntimeError("Калибровка СК3-50 (CAL:CURR?) не удалась")
 
     log("   ✅ Калибровка успешна (получен '0').")
