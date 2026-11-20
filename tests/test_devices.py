@@ -138,6 +138,63 @@ class Sk3LanRecoveryTests(unittest.TestCase):
             dev.close()
             app.close()
 
+    def test_empty_line_does_not_shift_response_stream(self):
+        # лишняя пустая строка от прибора пропускается, иначе следующее
+        # чтение получит ответ предыдущего запроса (рассинхрон потока)
+        meter, dev, app = self._make_meter()
+        try:
+            dev.sendall(b'\n55.5\n')
+            self.assertEqual(meter.read_peak(), 55.5)
+            dev.sendall(b'77.0\n')
+            self.assertEqual(meter.read_rms(), 77.0)
+        finally:
+            dev.close()
+            app.close()
+
+    def test_silent_meter_raises_timeout_instead_of_value_error(self):
+        meter, dev, app = self._make_meter()
+        try:
+            with self.assertRaises(TimeoutError):
+                meter.read_peak()
+        finally:
+            dev.close()
+            app.close()
+
+    def test_late_response_query_is_resent_without_desync(self):
+        import threading
+        import time
+        # ответ приходит позже таймаута чтения: запрос повторяется,
+        # поток ответов не сдвигается
+        dev, app = socket.socketpair()
+        app.settimeout(0.5)
+        inst = app.makefile('rwb')
+        inst._raw_sock = app
+        meter = SK350(inst)
+
+        def device():
+            count = 0
+            while True:
+                try:
+                    data = dev.recv(4096)
+                except OSError:
+                    return
+                if not data:
+                    return
+                if b'PEAK?' in data:
+                    count += 1
+                    time.sleep(0.8)      # дольше таймаута 0.5 с
+                    dev.sendall(f'{500553.7 + count}\n'.encode())
+
+        thread = threading.Thread(target=device, daemon=True)
+        thread.start()
+        try:
+            self.assertEqual(meter.read_peak(), 500554.7)
+            self.assertEqual(meter.read_peak(), 500555.7)
+        finally:
+            dev.close()
+            app.close()
+            thread.join(timeout=2)
+
 
 if __name__ == '__main__':
     unittest.main()

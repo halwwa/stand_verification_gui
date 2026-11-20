@@ -1,3 +1,6 @@
+import socket as _socket
+
+
 class SK350:
     """SK3-50 request/decode operations; connection ownership stays with caller."""
 
@@ -36,19 +39,32 @@ class SK350:
         После таймаута объект makefile навсегда отравлен: любое чтение даёт
         OSError 'cannot read from timed out object'. Ловим это, пересоздаём
         makefile поверх того же сокета и повторяем чтение один раз.
-        """
-        try:
-            raw = self._read_raw(self.session)
-        except OSError as e:
-            if "timed out object" not in str(e) or not self._rebind_makefile():
-                raise
-            raw = self._read_raw(self.session)
 
-        if isinstance(raw, bytes):
-            text = raw.decode("utf-8", errors="ignore")
-        else:
-            text = "" if raw is None else str(raw)
-        return text.strip()
+        Пустые строки (подтверждения/разделители прибора) пропускаются:
+        иначе пустая строка примет чужой ответ за свой, и все следующие
+        чтения получат ответы предыдущих запросов (рассинхрон потока).
+        Если прибор молчит, после нескольких пустых чтений бросаем
+        TimeoutError вместо неинформативного ValueError от float('').
+        """
+        empty_reads = 0
+        while True:
+            try:
+                raw = self._read_raw(self.session)
+            except OSError as e:
+                if "timed out object" not in str(e) or not self._rebind_makefile():
+                    raise
+                raw = self._read_raw(self.session)
+
+            if isinstance(raw, bytes):
+                text = raw.decode("utf-8", errors="ignore")
+            else:
+                text = "" if raw is None else str(raw)
+            text = text.strip()
+            if text:
+                return text
+            empty_reads += 1
+            if empty_reads >= 5:
+                raise TimeoutError("Прибор вернул пустой ответ")
 
     def _write(self, command):
         self.session.write(command)
@@ -63,24 +79,24 @@ class SK350:
         """Достаёт настоящий сокет из session.
 
         open_socket() сохраняет его в session._raw_sock — это основной путь.
-        Запасные пути для старых сессий: до Python 3.14 makefile('rwb')
+        Запасной путь для старых сессий: до Python 3.14 makefile('rwb')
         возвращал io.BufferedRandom (session.raw -> socket.SocketIO,
         у SocketIO сокет в _sock), начиная с 3.14 — io.BufferedRWPair,
-        у которого ни .raw, ни settimeout нет. Для pyVISA вернётся None —
-        там другой механизм.
+        у которого ни .raw, ни settimeout нет. Кандидаты фильтруются
+        через isinstance(socket.socket), чтобы случайные mock-атрибуты
+        сессии не принимать за сокет. Для pyVISA и pyserial вернётся
+        None — там другой механизм.
         """
-        if self._raw_sock is not None:
+        if isinstance(self._raw_sock, _socket.socket):
             return self._raw_sock
         obj = self.session
         raw = getattr(obj, "raw", None)
         if raw is not None:
             for attr in ("_sock", "sock"):
                 sock = getattr(raw, attr, None)
-                if sock is not None:
+                if isinstance(sock, _socket.socket):
                     return sock
-            if callable(getattr(raw, "settimeout", None)):
-                return raw                     # SocketIO сам умеет settimeout
-        if callable(getattr(obj, "settimeout", None)):
+        if isinstance(obj, _socket.socket):
             return obj
         return None
 
@@ -165,16 +181,31 @@ class SK350:
     # ---------- частота / уровень ----------
 
     def _read_float(self, command):
-        self._write(command)
-        return float(self._read_line())
+        """Шлёт запрос и читает числовой ответ; при таймауте повторяет запрос.
+
+        Все вызываемые здесь команды — идемпотентные опросы (FREQ?, POW?,
+        RMS?, PEAK?, THD?). Если ответ опоздал дольше таймаута чтения,
+        сбрасываем входной буфер и шлём запрос заново: иначе опоздавший
+        ответ прочитает следующий запрос, и поток ответов рассинхронизируется
+        (чтение начнёт возвращать ответы предыдущих запросов). Остальные
+        ошибки (мусор вместо числа, обрыв связи) не повторяем — сразу
+        уходят наверх как есть.
+        """
+        for attempt in range(2):
+            self._write(command)
+            try:
+                return float(self._read_line())
+            except TimeoutError:
+                self._flush_input()
+                if attempt == 1:
+                    raise
 
     def read_frequency_hz(self):
         return self._read_float(b"FREQ?\n")
 
     def read_if_khz(self):
-        self._write(b"FREQ:INT?\n")
         try:
-            return float(self._read_line()) / 1000.0
+            return self._read_float(b"FREQ:INT?\n") / 1000.0
         except ValueError as e:
             raise ValueError(f"Некорректный разбор частоты ПЧ: {e}")
 
